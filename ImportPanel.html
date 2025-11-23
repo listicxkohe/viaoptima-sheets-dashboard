@@ -1,0 +1,552 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <base target="_top" />
+    <style>
+      body {
+        font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+          sans-serif;
+        font-size: 13px;
+        margin: 0;
+        padding: 0;
+        background: #f5f7fb;
+      }
+      .header {
+        padding: 12px 16px;
+        background: #111827;
+        color: #f9fafb;
+        font-weight: 600;
+        font-size: 14px;
+      }
+      .tabs {
+        display: flex;
+        border-bottom: 1px solid #e5e7eb;
+        background: #f9fafb;
+      }
+      .tab {
+        flex: 1;
+        text-align: center;
+        padding: 8px 0;
+        cursor: pointer;
+        font-size: 12px;
+        font-weight: 500;
+        border-bottom: 2px solid transparent;
+        color: #6b7280;
+      }
+      .tab.active {
+        border-bottom-color: #2563eb;
+        color: #111827;
+        background: #ffffff;
+      }
+      .content {
+        padding: 12px 16px 16px;
+      }
+      .section-title {
+        font-weight: 600;
+        margin: 8px 0 4px;
+        font-size: 12px;
+        color: #374151;
+      }
+      .hint {
+        font-size: 11px;
+        color: #6b7280;
+        margin-bottom: 8px;
+      }
+      textarea {
+        width: 100%;
+        box-sizing: border-box;
+        min-height: 120px;
+        font-family: monospace;
+        font-size: 11px;
+        padding: 8px;
+        border-radius: 6px;
+        border: 1px solid #d1d5db;
+        resize: vertical;
+      }
+      .btn-row {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        margin-top: 10px;
+      }
+      .btn {
+        border: none;
+        border-radius: 999px;
+        padding: 8px 12px;
+        font-size: 12px;
+        font-weight: 500;
+        cursor: pointer;
+        color: #ffffff;
+      }
+      .btn-primary {
+        background: #2563eb;
+      }
+      .btn-primary:hover {
+        background: #1d4ed8;
+      }
+      .btn-secondary {
+        background: #4b5563;
+      }
+      .btn-secondary:hover {
+        background: #374151;
+      }
+      .btn-ghost {
+        background: #e5e7eb;
+        color: #111827;
+      }
+      .btn-ghost:hover {
+        background: #d1d5db;
+      }
+      .row {
+        display: flex;
+        gap: 8px;
+        margin: 4px 0;
+        align-items: center;
+      }
+      .row label {
+        flex: 1.6;
+        font-size: 11px;
+        color: #4b5563;
+      }
+      .row input[type="number"],
+      .row input[type="range"] {
+        flex: 1;
+      }
+      .weightLabel {
+        width: 42px;
+        text-align: right;
+        font-size: 11px;
+        color: #111827;
+      }
+      .status {
+        margin-top: 8px;
+        font-size: 11px;
+        color: #6b7280;
+      }
+      .status.ok {
+        color: #16a34a;
+      }
+      .status.error {
+        color: #dc2626;
+      }
+      .pill {
+        display: inline-block;
+        padding: 2px 8px;
+        border-radius: 999px;
+        font-size: 10px;
+        background: #e5f2ff;
+        color: #2563eb;
+        margin-left: 4px;
+      }
+      .tab-content {
+        display: none;
+      }
+      .tab-content.active {
+        display: block;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="header">ViaOptima Control Panel</div>
+
+    <div class="tabs">
+      <div class="tab active" id="tab-import" onclick="switchTab('import')">
+        Import
+      </div>
+      <div class="tab" id="tab-leaderboard" onclick="switchTab('leaderboard')">
+        Leaderboard &amp; scoring
+      </div>
+    </div>
+
+    <div class="content">
+      <!-- IMPORT TAB -->
+      <div id="content-import" class="tab-content active">
+        <div class="section-title">Raw data input</div>
+        <div class="hint">
+          Paste weekly scorecard or daily route table into the field below,
+          then choose which import to run.
+        </div>
+
+        <textarea id="rawInput"></textarea>
+
+        <div class="btn-row">
+          <button class="btn btn-primary" onclick="runImport('weekly')">
+            Import Weekly Scorecard
+          </button>
+          <button class="btn btn-secondary" onclick="runImport('dailyStart')">
+            Daily routes – START of day
+          </button>
+          <button class="btn btn-secondary" onclick="runImport('dailyEnd')">
+            Daily routes – END of day
+          </button>
+        </div>
+
+        <div id="importStatus" class="status"></div>
+      </div>
+
+      <!-- LEADERBOARD TAB -->
+      <div id="content-leaderboard" class="tab-content">
+        <div class="section-title">
+          Ranking weights <span class="pill">Config</span>
+        </div>
+        <div class="hint">
+          DCR/POD/CC weights are normalised inside the quality score.
+          The other sliders are direct multipliers in the final formula.
+        </div>
+
+        <!-- QUALITY -->
+        <div class="row">
+          <label>DCR weight</label>
+          <input
+            type="range"
+            id="wDcr"
+            step="0.05"
+            min="0"
+            max="1"
+            value="0.4"
+            oninput="updateWeightLabel('Dcr')"
+          />
+          <span id="wDcrLabel" class="weightLabel">0.40</span>
+        </div>
+        <div class="row">
+          <label>POD weight</label>
+          <input
+            type="range"
+            id="wPod"
+            step="0.05"
+            min="0"
+            max="1"
+            value="0.4"
+            oninput="updateWeightLabel('Pod')"
+          />
+          <span id="wPodLabel" class="weightLabel">0.40</span>
+        </div>
+        <div class="row">
+          <label>CC weight</label>
+          <input
+            type="range"
+            id="wCc"
+            step="0.05"
+            min="0"
+            max="1"
+            value="0.2"
+            oninput="updateWeightLabel('Cc')"
+          />
+          <span id="wCcLabel" class="weightLabel">0.20</span>
+        </div>
+
+        <hr style="margin: 8px 0; border: none; border-top: 1px solid #e5e7eb" />
+
+        <!-- VOLUME / EXPERIENCE -->
+        <div class="row">
+          <label>Deliveries weight (volume)</label>
+          <input
+            type="range"
+            id="wDeliveries"
+            step="0.1"
+            min="0"
+            max="2"
+            value="0.5"
+            oninput="updateWeightLabel('Deliveries')"
+          />
+          <span id="wDeliveriesLabel" class="weightLabel">0.50</span>
+        </div>
+        <div class="row">
+          <label>Weeks weight (experience)</label>
+          <input
+            type="range"
+            id="wWeeks"
+            step="0.1"
+            min="0"
+            max="2"
+            value="0.3"
+            oninput="updateWeightLabel('Weeks')"
+          />
+          <span id="wWeeksLabel" class="weightLabel">0.30</span>
+        </div>
+
+        <hr style="margin: 8px 0; border: none; border-top: 1px solid #e5e7eb" />
+
+        <!-- RESCUES -->
+        <div class="row">
+          <label>Rescues given weight (bonus)</label>
+          <input
+            type="range"
+            id="wResGiven"
+            step="0.1"
+            min="0"
+            max="3"
+            value="1.0"
+            oninput="updateWeightLabel('ResGiven')"
+          />
+          <span id="wResGivenLabel" class="weightLabel">1.00</span>
+        </div>
+        <div class="row">
+          <label>Rescues taken weight (penalty)</label>
+          <input
+            type="range"
+            id="wResTaken"
+            step="0.1"
+            min="0"
+            max="3"
+            value="1.0"
+            oninput="updateWeightLabel('ResTaken')"
+          />
+          <span id="wResTakenLabel" class="weightLabel">1.00</span>
+        </div>
+
+        <hr style="margin: 8px 0; border: none; border-top: 1px solid #e5e7eb" />
+
+        <div class="row">
+          <label>Minimum weeks to rank</label>
+          <input
+            type="number"
+            id="minWeeks"
+            step="1"
+            min="1"
+            max="52"
+            value="1"
+          />
+        </div>
+
+        <div class="btn-row">
+          <button class="btn btn-primary" onclick="saveConfig()">
+            Save leaderboard config
+          </button>
+          <button class="btn btn-ghost" onclick="openLeaderboard()">
+            Open leaderboard
+          </button>
+        </div>
+
+        <div id="configStatus" class="status"></div>
+      </div>
+    </div>
+
+    <script>
+      /*********** TABS ***********/
+      function switchTab(which) {
+        document
+          .getElementById("tab-import")
+          .classList.toggle("active", which === "import");
+        document
+          .getElementById("tab-leaderboard")
+          .classList.toggle("active", which === "leaderboard");
+
+        document
+          .getElementById("content-import")
+          .classList.toggle("active", which === "import");
+        document
+          .getElementById("content-leaderboard")
+          .classList.toggle("active", which === "leaderboard");
+      }
+
+      /*********** IMPORT FUNCTIONS ***********/
+      function runImport(type) {
+        var text = document.getElementById("rawInput").value || "";
+        var statusEl = document.getElementById("importStatus");
+        if (!text.trim()) {
+          statusEl.textContent = "Paste some data first.";
+          statusEl.className = "status error";
+          return;
+        }
+
+        statusEl.textContent = "Running " + type + " import…";
+        statusEl.className = "status";
+
+        if (type === "weekly") {
+          google.script.run
+            .withSuccessHandler(function () {
+              statusEl.textContent = "Weekly import finished.";
+              statusEl.className = "status ok";
+              document.getElementById("rawInput").value = "";
+            })
+            .withFailureHandler(function (err) {
+              statusEl.textContent = "Error: " + err.message;
+              statusEl.className = "status error";
+            })
+            .importFromPaste(text);
+        } else if (type === "dailyStart") {
+          google.script.run
+            .withSuccessHandler(function () {
+              statusEl.textContent = "Daily START import finished.";
+              statusEl.className = "status ok";
+              document.getElementById("rawInput").value = "";
+            })
+            .withFailureHandler(function (err) {
+              statusEl.textContent = "Error: " + err.message;
+              statusEl.className = "status error";
+            })
+            .importDailyFromRaw(text, true);
+        } else if (type === "dailyEnd") {
+          google.script.run
+            .withSuccessHandler(function () {
+              statusEl.textContent = "Daily END import finished.";
+              statusEl.className = "status ok";
+              document.getElementById("rawInput").value = "";
+            })
+            .withFailureHandler(function (err) {
+              statusEl.textContent = "Error: " + err.message;
+              statusEl.className = "status error";
+            })
+            .importDailyFromRaw(text, false);
+        }
+      }
+
+      /*********** CONFIG LOAD / SAVE ***********/
+      function updateWeightLabel(which) {
+        var id = "w" + which;
+        var el = document.getElementById(id);
+        if (!el) return;
+        var val = parseFloat(el.value) || 0;
+        var label = document.getElementById(id + "Label");
+        if (label) label.textContent = val.toFixed(2);
+      }
+
+      function loadConfig() {
+        var statusEl = document.getElementById("configStatus");
+        statusEl.textContent = "Loading config…";
+        statusEl.className = "status";
+
+        google.script.run
+          .withSuccessHandler(function (cfg) {
+            cfg = cfg || {};
+
+            var d =
+              typeof cfg.dcrWeight === "number"
+                ? cfg.dcrWeight
+                : typeof cfg.weightDcr === "number"
+                ? cfg.weightDcr
+                : 0.4;
+            var p =
+              typeof cfg.podWeight === "number"
+                ? cfg.podWeight
+                : typeof cfg.weightPod === "number"
+                ? cfg.weightPod
+                : 0.4;
+            var c =
+              typeof cfg.ccWeight === "number"
+                ? cfg.ccWeight
+                : typeof cfg.weightCc === "number"
+                ? cfg.weightCc
+                : 0.2;
+            var m =
+              typeof cfg.minWeeks === "number" ? cfg.minWeeks : 1;
+
+            var vol =
+              typeof cfg.volumeWeight === "number"
+                ? cfg.volumeWeight
+                : 0.5;
+            var wWeeks =
+              typeof cfg.weeksWeight === "number"
+                ? cfg.weeksWeight
+                : 0.3;
+            var wResG =
+              typeof cfg.rescuesGivenWeight === "number"
+                ? cfg.rescuesGivenWeight
+                : 1.0;
+            var wResT =
+              typeof cfg.rescuesTakenWeight === "number"
+                ? cfg.rescuesTakenWeight
+                : 1.0;
+
+            document.getElementById("wDcr").value = d;
+            document.getElementById("wPod").value = p;
+            document.getElementById("wCc").value = c;
+            document.getElementById("minWeeks").value = m;
+
+            document.getElementById("wDeliveries").value = vol;
+            document.getElementById("wWeeks").value = wWeeks;
+            document.getElementById("wResGiven").value = wResG;
+            document.getElementById("wResTaken").value = wResT;
+
+            updateWeightLabel("Dcr");
+            updateWeightLabel("Pod");
+            updateWeightLabel("Cc");
+            updateWeightLabel("Deliveries");
+            updateWeightLabel("Weeks");
+            updateWeightLabel("ResGiven");
+            updateWeightLabel("ResTaken");
+
+            statusEl.textContent = "Config loaded.";
+            statusEl.className = "status ok";
+          })
+          .withFailureHandler(function (err) {
+            statusEl.textContent = "Failed to load config: " + err.message;
+            statusEl.className = "status error";
+          })
+          .getLeaderboardConfig();
+      }
+
+      function saveConfig() {
+        var statusEl = document.getElementById("configStatus");
+
+        var d = parseFloat(document.getElementById("wDcr").value) || 0;
+        var p = parseFloat(document.getElementById("wPod").value) || 0;
+        var c = parseFloat(document.getElementById("wCc").value) || 0;
+        var m =
+          parseInt(document.getElementById("minWeeks").value, 10) || 1;
+
+        var vol =
+          parseFloat(document.getElementById("wDeliveries").value) || 0.5;
+        var wWeeks =
+          parseFloat(document.getElementById("wWeeks").value) || 0.3;
+        var wResG =
+          parseFloat(document.getElementById("wResGiven").value) || 1.0;
+        var wResT =
+          parseFloat(document.getElementById("wResTaken").value) || 1.0;
+
+        // Send both naming styles for backwards compatibility
+        var cfg = {
+          dcrWeight: d,
+          podWeight: p,
+          ccWeight: c,
+          weightDcr: d,
+          weightPod: p,
+          weightCc: c,
+          minWeeks: m,
+          volumeWeight: vol,
+          weeksWeight: wWeeks,
+          rescuesGivenWeight: wResG,
+          rescuesTakenWeight: wResT,
+        };
+
+        statusEl.textContent = "Saving config…";
+        statusEl.className = "status";
+
+        google.script.run
+          .withSuccessHandler(function () {
+            statusEl.textContent = "Config saved.";
+            statusEl.className = "status ok";
+          })
+          .withFailureHandler(function (err) {
+            statusEl.textContent =
+              "Failed to save config: " + err.message;
+            statusEl.className = "status error";
+          })
+          .saveLeaderboardConfig(cfg);
+      }
+
+      /*********** OPEN LEADERBOARD ***********/
+      function openLeaderboard() {
+        var statusEl = document.getElementById("configStatus");
+        statusEl.textContent = "Opening leaderboard…";
+        statusEl.className = "status";
+
+        google.script.run
+          .withSuccessHandler(function () {
+            statusEl.textContent = "Leaderboard opened.";
+            statusEl.className = "status ok";
+          })
+          .withFailureHandler(function (err) {
+            statusEl.textContent =
+              "Failed to open leaderboard: " + err.message;
+            statusEl.className = "status error";
+          })
+          .openLeaderboardDialog();
+      }
+
+      // Initial load
+      loadConfig();
+    </script>
+  </body>
+</html>
