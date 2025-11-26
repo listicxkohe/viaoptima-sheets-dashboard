@@ -291,6 +291,8 @@
     </div>
 
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
     <script>
       const SCORECARD_TRANSPORTER_ID = <?!= JSON.stringify(transporterId || "") ?>;
       const INITIAL_DRIVER_NAME = <?!= JSON.stringify(driverName || "") ?>;
@@ -382,38 +384,42 @@
           showError("Transporter ID missing; cannot export PDF.");
           return;
         }
-        setLoading(true, "Preparing PDF...");
-        google.script.run
-          .withSuccessHandler(function (res) {
-            setLoading(false);
-            triggerPdfDownload(res);
-          })
-          .withFailureHandler(function (err) {
-            setLoading(false);
-            showError(
-              err && err.message
-                ? err.message
-                : "Failed to prepare the PDF export."
-            );
-          })
-          .downloadScorecardPdf(SCORECARD_TRANSPORTER_ID);
+        generateClientPdf();
       }
 
-      function triggerPdfDownload(res) {
-        if (!res || !res.base64) {
-          showError("PDF export did not return a file.");
-          return;
+      async function generateClientPdf() {
+        try {
+          setLoading(true, "Rendering PDF...");
+          showError("");
+          var shell = document.querySelector(".scorecard-shell");
+          if (!shell) {
+            throw new Error("Scorecard container not found.");
+          }
+          window.scrollTo(0, 0);
+          var overlay = document.getElementById("loadingOverlay");
+          var priorOverlayDisplay = overlay ? overlay.style.display : null;
+          if (overlay) overlay.style.display = "none";
+          var canvas = await html2canvas(shell, {
+            scale: 2,
+            useCORS: true,
+            ignoreElements: function (el) {
+              return el && el.id === "loadingOverlay";
+            },
+          });
+          if (overlay && priorOverlayDisplay !== null) {
+            overlay.style.display = priorOverlayDisplay;
+          }
+          var imgData = canvas.toDataURL("image/png");
+          // Build a single-page PDF sized to the rendered canvas to avoid mid-content page breaks.
+          var pdf = new jspdf.jsPDF("p", "px", [canvas.width, canvas.height]);
+          pdf.addImage(imgData, "PNG", 0, 0, canvas.width, canvas.height);
+          var fileName = (document.getElementById("driverName").textContent || "driver_scorecard") + ".pdf";
+          pdf.save(fileName);
+        } catch (err) {
+          showError(err && err.message ? err.message : "Failed to render PDF.");
+        } finally {
+          setLoading(false);
         }
-        var link = document.createElement("a");
-        link.href =
-          "data:" +
-          (res.mimeType || "application/pdf") +
-          ";base64," +
-          res.base64;
-        link.download = res.fileName || "driver_scorecard.pdf";
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
       }
 
       function renderScorecard(data) {
