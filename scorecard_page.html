@@ -1,0 +1,954 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <base target="_top">
+    <style>
+      * { box-sizing: border-box; font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+      body { margin: 0; background: #f5f7fb; color: #1f2937; }
+      .scorecard-shell { padding: 20px; max-width: 1100px; margin: 0 auto; position: relative; }
+      .head-card { background: #fff; border-radius: 20px; padding: 18px 22px; box-shadow: 0 12px 24px rgba(15,23,42,0.08); display: flex; flex-wrap: wrap; gap: 20px; justify-content: space-between; align-items: center; }
+      .driver-info { display: flex; align-items: center; gap: 16px; min-width: 320px; }
+      .avatar { width: 72px; height: 72px; border-radius: 18px; background: linear-gradient(145deg,#2563eb,#3b82f6); color: #fff; font-size: 28px; font-weight: 600; display: flex; align-items: center; justify-content: center; }
+      .driver-name { font-size: 20px; font-weight: 600; margin-bottom: 4px; }
+      .driver-meta, .driver-note { font-size: 12px; color: #6b7280; }
+      .driver-actions { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+      .back-btn { border: none; border-radius: 999px; padding: 8px 18px; background: #e0e7ff; color: #1d4ed8; font-weight: 600; cursor: pointer; }
+      .back-btn:hover { background: #c7d2fe; }
+      .driver-rank { display:flex; align-items:center; gap:12px; }
+      .rank-chip { background:#f3f4f6; color:#111827; border-radius:999px; padding:10px 18px; font-weight:600; font-size:15px; min-width:110px; text-align:center; display:flex; align-items:center; justify-content:center; gap:6px; }
+      .rank-chip.top-1,.rank-chip.top-2,.rank-chip.top-3 { background: linear-gradient(135deg,#fde68a,#facc15); color:#78350f; }
+      .rank-chip.top-1::before { content:"??"; }
+      .rank-chip.top-2::before { content:"??"; }
+      .rank-chip.top-3::before { content:"??"; }
+      .score-box { text-align:right; }
+      .score-label { text-transform:uppercase; font-size:11px; color:#6b7280; letter-spacing:0.04em; }
+      .score-value { font-size:32px; font-weight:700; }
+      .rank-standing { font-size:12px; color:#6b7280; }
+      .metrics-row { display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:12px; margin:18px 0; }
+      .metric-card { background:#fff; border-radius:16px; padding:14px 16px; box-shadow:0 10px 18px rgba(15,23,42,0.08); }
+      .metric-label { text-transform:uppercase; font-size:11px; color:inherit; letter-spacing:0.04em; }
+      .metric-value { font-size:26px; font-weight:600; }
+      .metric-sub { font-size:12px; color:inherit; opacity:0.8; }
+      .metric-trend { font-size:12px; margin-top:4px; color:#6b7280; display:flex; align-items:center; gap:4px; }
+      .metric-trend.positive { color:#16a34a; }
+      .metric-trend.negative { color:#dc2626; }
+      .content-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(320px,1fr)); gap:16px; }
+      .comparison-layout { display:grid; grid-template-columns:minmax(420px,2fr) minmax(260px,1fr); gap:16px; align-items:flex-start; margin-top:16px; }
+      @media (max-width: 1200px) {
+        .comparison-layout { grid-template-columns:1fr; }
+      }
+      .panel { background:#fff; border-radius:20px; padding:18px; box-shadow:0 12px 24px rgba(15,23,42,0.08); }
+      .panel.large { min-height:280px; }
+      .panel-title { font-size:14px; font-weight:600; margin-bottom:6px; }
+      .panel-subtitle { font-size:12px; color:#6b7280; }
+      .chart-container { height:240px; position:relative; }
+      .chart-container.score-chart { height:200px; }
+      #dailyChart,#rescueChart,#scoreChart { width:100%; height:100%; display:none; }
+      .chart-empty { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; font-size:12px; color:#9ca3af; text-align:center; padding:20px; }
+      .rescue-grid { display:flex; gap:12px; flex-wrap:wrap; margin:12px 0; }
+      .rescue-card { flex:1 1 120px; border-radius:12px; padding:12px; background:#f8fafc; }
+      .rescue-total { flex:1 1 120px; border-radius:12px; padding:14px; color:#fff; font-weight:600; }
+      .rescue-total.green { background:#22c55e; }
+      .rescue-total.orange { background:#f97316; }
+      .comparison-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(160px,1fr)); gap:12px; margin-top:10px; }
+      .comparison-card { border-radius:14px; padding:12px; background:#f8fafc; min-height:96px; display:flex; flex-direction:column; justify-content:space-between; }
+      .comparison-label { font-size:11px; text-transform:uppercase; color:#6b7280; letter-spacing:0.04em; }
+      .comparison-value { font-size:18px; font-weight:600; }
+      .comparison-note { font-size:12px; color:#6b7280; }
+      .spotlight-panel { margin-top:16px; }
+      .spotlight-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:12px; }
+      .spotlight-card { border-radius:14px; padding:14px; background:#eef2ff; color:#312e81; min-height:90px; }
+      .spotlight-card strong { display:block; font-size:13px; margin-bottom:4px; }
+      .additional-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(140px,1fr)); gap:12px; margin-top:12px; }
+      .additional-label { font-size:11px; color:#6b7280; text-transform:uppercase; letter-spacing:0.05em; }
+      .additional-value { font-size:18px; font-weight:600; }
+      .history-panel { margin-top:18px; }
+      .history-list { list-style:none; margin:0; padding:0; display:grid; gap:10px; }
+      .history-list li { display:flex; justify-content:space-between; align-items:center; padding:12px 14px; border-radius:14px; background:#f8fafc; font-size:13px; }
+      .history-change { font-weight:600; }
+      .history-change.positive { color:#16a34a; }
+      .history-change.negative { color:#dc2626; }
+      .history-value { font-size:15px; font-weight:600; color:#111827; text-align:right; }
+      .routes-panel { margin-top:18px; }
+      .routes-list { list-style:none; margin:0; padding:0; display:grid; gap:10px; }
+      .routes-list li { padding:12px 14px; border-radius:14px; background:#f1f5f9; display:flex; justify-content:space-between; align-items:center; font-weight:600; }
+      .routes-badge { font-size:12px; color:#6b7280; text-transform:uppercase; letter-spacing:0.06em; }
+      .bottom-grid { margin-top:18px; }
+      .actions-row { margin-top:18px; display:flex; justify-content:flex-end; gap:12px; flex-wrap:wrap; }
+      .action-btn { border:none; border-radius:999px; padding:10px 20px; background:#e5e7eb; color:#111827; cursor:pointer; }
+      .action-btn.primary { background:#2563eb; color:#fff; }
+      .action-btn:disabled { opacity:0.6; cursor:not-allowed; }
+      .muted { color:#9ca3af; font-size:12px; }
+      .loading-overlay { position:fixed; inset:0; background:rgba(255,255,255,0.85); display:none; align-items:center; justify-content:center; z-index:30; }
+      .loading-box { text-align:center; font-weight:600; color:#1f2937; }
+      .spinner { width:28px; height:28px; border-radius:50%; border:4px solid #dbeafe; border-top-color:#2563eb; animation:spin 0.8s linear infinite; margin:0 auto 8px; }
+      @keyframes spin { to { transform: rotate(360deg); } }
+      .error-banner { display:none; background:#fee2e2; color:#b91c1c; border-radius:12px; padding:10px 14px; margin-bottom:12px; font-size:12px; }      </style>
+  </head>
+  <body>
+    <div class="scorecard-shell">
+      <div class="loading-overlay" id="loadingOverlay">
+        <div class="loading-box">
+          <div class="spinner"></div>
+          <div id="loadingMessage">Loading scorecard...</div>
+        </div>
+      </div>
+
+      <div class="error-banner" id="errorBanner"></div>
+
+      <div class="head-card">
+        <div class="driver-info">
+          <div class="avatar" id="driverAvatar">--</div>
+          <div>
+            <div class="driver-name" id="driverName">Driver</div>
+            <div class="driver-meta">
+              <span id="driverId"></span>
+              <span> | </span>
+              <span id="driverStatus">Status</span>
+            </div>
+            <div class="driver-note" id="driverSummaryNote"></div>
+            <div class="driver-note" id="driverDsp">DSP: N/A</div>
+            <div class="driver-note" id="driverWeeks"></div>
+          </div>
+        </div>
+        <div class="driver-actions">
+          <button class="back-btn" id="btnBack">← Back to leaderboard</button>
+          <div class="driver-rank">
+            <div class="rank-chip" id="driverRankBadge">#</div>
+            <div class="score-box">
+              <div class="score-label">Score</div>
+              <div class="score-value" id="driverScore">0.0</div>
+              <div class="rank-standing" id="driverStanding"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="metrics-row">
+        <div class="metric-card">
+          <div class="metric-label">Total deliveries</div>
+          <div class="metric-value" id="metricDeliveries">0</div>
+          <div class="metric-sub" id="metricDeliveriesRank"></div>
+          <div class="metric-trend" id="metricDeliveriesTrend"></div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-label">Avg DCR</div>
+          <div class="metric-value" id="metricDcr">0%</div>
+          <div class="metric-sub" id="metricDcrRank"></div>
+          <div class="metric-trend" id="metricDcrTrend"></div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-label">Avg POD</div>
+          <div class="metric-value" id="metricPod">0%</div>
+          <div class="metric-sub" id="metricPodRank"></div>
+          <div class="metric-trend" id="metricPodTrend"></div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-label">Avg CC</div>
+          <div class="metric-value" id="metricCc">0%</div>
+          <div class="metric-sub" id="metricCcRank"></div>
+          <div class="metric-trend" id="metricCcTrend"></div>
+        </div>
+      </div>
+
+      <div class="content-grid">
+        <div class="panel large">
+          <div class="panel-title">Daily deliveries (last 7 days)</div>
+          <div class="chart-container">
+            <canvas id="dailyChart"></canvas>
+            <div class="chart-empty" id="dailyChartEmpty">No deliveries captured for the latest week.</div>
+          </div>
+          <div class="panel-title" style="margin-top:16px;">Weekly score progress</div>
+          <div class="chart-container score-chart">
+            <canvas id="scoreChart"></canvas>
+            <div class="chart-empty" id="scoreChartEmpty">Need more historical weeks to show score progress.</div>
+          </div>
+        </div>
+        <div class="panel">
+          <div class="panel-title">Rescues</div>
+          <div class="panel-subtitle">Give credit for helping and track when help is required.</div>
+          <div class="rescue-grid">
+            <div class="rescue-card">
+              <div class="metric-label">Given per week</div>
+              <div class="metric-value" id="rescuesGivenPerWeek">0</div>
+            </div>
+            <div class="rescue-card">
+              <div class="metric-label">Taken per week</div>
+              <div class="metric-value" id="rescuesTakenPerWeek">0</div>
+            </div>
+          </div>
+          <div class="rescue-grid">
+            <div class="rescue-total green">
+              <div class="metric-label">Total given</div>
+              <div class="metric-value" id="rescuesGivenTotal">0</div>
+            </div>
+            <div class="rescue-total orange">
+              <div class="metric-label">Total taken</div>
+              <div class="metric-value" id="rescuesTakenTotal">0</div>
+            </div>
+          </div>
+          <div class="panel-title">Weekly trend</div>
+          <div class="chart-container">
+            <canvas id="rescueChart"></canvas>
+            <div class="chart-empty" id="rescueChartEmpty">No rescue activity logged yet.</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="comparison-layout">
+        <div class="panel comparison-panel">
+          <div class="panel-title">Performance comparison</div>
+          <div class="comparison-grid">
+            <div class="comparison-card">
+              <div class="comparison-label">Score vs team avg</div>
+              <div class="comparison-value" id="comparisonScoreDiff">0.0</div>
+              <div class="comparison-note" id="comparisonScoreNote"></div>
+            </div>
+            <div class="comparison-card">
+              <div class="comparison-label">Gap to rank #1</div>
+              <div class="comparison-value" id="comparisonScoreTop">0.0</div>
+              <div class="comparison-note">Points away from the leader</div>
+            </div>
+            <div class="comparison-card">
+              <div class="comparison-label">Deliveries vs avg</div>
+              <div class="comparison-value" id="comparisonDeliveriesDiff">0.0</div>
+              <div class="comparison-note" id="comparisonDeliveriesNote"></div>
+            </div>
+            <div class="comparison-card">
+              <div class="comparison-label">Quality vs avg</div>
+              <div class="comparison-value" id="comparisonQualityDiff">0.0</div>
+              <div class="comparison-note" id="comparisonQualityNote"></div>
+            </div>
+            <div class="comparison-card">
+              <div class="comparison-label">Rescue balance</div>
+              <div class="comparison-value" id="comparisonRescueDiff">0.0</div>
+              <div class="comparison-note" id="comparisonRescueNote"></div>
+            </div>
+            <div class="comparison-card">
+              <div class="comparison-label">Deliveries / week</div>
+              <div class="comparison-value" id="comparisonVolumeDiff">0.0</div>
+              <div class="comparison-note">Vs team average</div>
+            </div>
+            <div class="comparison-card">
+              <div class="comparison-label">Experience</div>
+              <div class="comparison-value" id="comparisonWeeksDiff">0</div>
+              <div class="comparison-note">Weeks vs average</div>
+            </div>
+            <div class="comparison-card">
+              <div class="comparison-label">Percentile</div>
+              <div class="comparison-value" id="comparisonPercentile">Top</div>
+              <div class="comparison-note">Standing across team</div>
+            </div>
+          </div>
+        </div>
+        <div class="panel additional-panel">
+          <div class="panel-title">Additional metrics</div>
+          <div class="additional-grid">
+            <div>
+              <div class="additional-label">Avg stops</div>
+              <div class="additional-value" id="avgStopsValue">N/A</div>
+            </div>
+            <div>
+              <div class="additional-label">Total weeks</div>
+              <div class="additional-value" id="totalWeeksValue">0</div>
+            </div>
+            <div>
+              <div class="additional-label">Total routes</div>
+              <div class="additional-value" id="totalRoutesValue">0</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel spotlight-panel">
+        <div class="panel-title">Driver spotlight</div>
+        <div class="spotlight-grid" id="spotlightGrid">
+          <div class="muted">Gathering highlights...</div>
+        </div>
+      </div>
+
+      <div class="content-grid bottom-grid">
+        <div class="panel history-panel">
+          <div class="panel-title">Recent weekly highlights</div>
+          <ul class="history-list" id="historyList">
+            <li class="muted">Loading week history...</li>
+          </ul>
+        </div>
+        <div class="panel routes-panel">
+          <div class="panel-title">Top routes</div>
+          <ul class="routes-list" id="routesList">
+            <li class="muted">Gathering route data...</li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="actions-row">
+        <button class="action-btn" data-type="email">Email</button>
+        <button class="action-btn" data-type="whatsapp">WhatsApp</button>
+        <button class="action-btn" data-type="sms">SMS</button>
+        <button class="action-btn primary" id="btnDownloadPdf">Download PDF</button>
+      </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+    <script>
+      const SCORECARD_TRANSPORTER_ID = <?!= JSON.stringify(transporterId || "") ?>;
+      const INITIAL_DRIVER_NAME = <?!= JSON.stringify(driverName || "") ?>;
+      let dailyChart = null;
+      let rescueChart = null;
+      let scoreChart = null;
+
+      document.addEventListener("DOMContentLoaded", function () {
+        if (INITIAL_DRIVER_NAME) {
+          setText("driverName", INITIAL_DRIVER_NAME);
+          setText("driverAvatar", buildInitials(INITIAL_DRIVER_NAME));
+        }
+        document
+          .querySelectorAll(".action-btn[data-type]")
+          .forEach(function (btn) {
+            btn.addEventListener("click", function () {
+              actionComingSoon(this.getAttribute("data-type"));
+            });
+          });
+        var backBtn = document.getElementById("btnBack");
+        if (backBtn) {
+          backBtn.addEventListener("click", handleBackAction);
+        }
+        var pdfBtn = document.getElementById("btnDownloadPdf");
+        if (pdfBtn) {
+          pdfBtn.addEventListener("click", startPdfDownload);
+        }
+        fetchScorecard();
+      });
+
+      function fetchScorecard() {
+        if (!SCORECARD_TRANSPORTER_ID) {
+          showError("Transporter ID is missing for this scorecard.");
+          return;
+        }
+        setLoading(true, "Loading scorecard...");
+        showError("");
+        google.script.run
+          .withSuccessHandler(function (data) {
+            setLoading(false);
+            renderScorecard(data);
+          })
+          .withFailureHandler(function (err) {
+            setLoading(false);
+            showError(
+              err && err.message ? err.message : "Failed to load scorecard data."
+            );
+          })
+          .getDriverScorecardData(SCORECARD_TRANSPORTER_ID);
+      }
+
+      function handleBackAction() {
+        var hasGoogle =
+          typeof google !== "undefined" &&
+          google.script &&
+          google.script.run &&
+          google.script.run.openLeaderboardDialog;
+        if (hasGoogle) {
+          google.script.run
+            .withSuccessHandler(closeScorecardDialog)
+            .withFailureHandler(closeScorecardDialog)
+            .openLeaderboardDialog();
+        } else {
+          closeScorecardDialog();
+        }
+      }
+
+      function closeScorecardDialog() {
+        try {
+          if (
+            typeof google !== "undefined" &&
+            google.script &&
+            google.script.host &&
+            google.script.host.close
+          ) {
+            google.script.host.close();
+            return;
+          }
+        } catch (err) {
+          // fall through
+        }
+        if (window && window.close) {
+          window.close();
+        }
+      }
+
+      function startPdfDownload() {
+        if (!SCORECARD_TRANSPORTER_ID) {
+          showError("Transporter ID missing; cannot export PDF.");
+          return;
+        }
+        setLoading(true, "Preparing PDF...");
+        google.script.run
+          .withSuccessHandler(function (res) {
+            setLoading(false);
+            triggerPdfDownload(res);
+          })
+          .withFailureHandler(function (err) {
+            setLoading(false);
+            showError(
+              err && err.message
+                ? err.message
+                : "Failed to prepare the PDF export."
+            );
+          })
+          .downloadScorecardPdf(SCORECARD_TRANSPORTER_ID);
+      }
+
+      function triggerPdfDownload(res) {
+        if (!res || !res.base64) {
+          showError("PDF export did not return a file.");
+          return;
+        }
+        var link = document.createElement("a");
+        link.href =
+          "data:" +
+          (res.mimeType || "application/pdf") +
+          ";base64," +
+          res.base64;
+        link.download = res.fileName || "driver_scorecard.pdf";
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+      }
+
+      function renderScorecard(data) {
+        if (!data || !data.driver) {
+          showError("No scorecard data returned.");
+          return;
+        }
+        showError("");
+
+        var driver = data.driver;
+        setText("driverName", driver.name || "Driver");
+        setText(
+          "driverAvatar",
+          buildInitials(driver.name || driver.transporterId || "")
+        );
+        setText("driverId", driver.transporterId || "");
+        setText("driverStatus", driver.status || "Status unknown");
+        setText("driverSummaryNote", driver.summaryNote || "");
+        setText(
+          "driverDsp",
+          driver.dspList && driver.dspList.length
+            ? "DSP: " + driver.dspList.join(", ")
+            : "DSP: N/A"
+        );
+        setText(
+          "driverWeeks",
+          driver.weeks ? driver.weeks + " weeks tracked" : "No weekly history yet"
+        );
+        setRankBadge(driver.rank);
+        setText("driverScore", driver.score != null ? driver.score.toFixed(1) : "N/A");
+        setText("driverStanding", driver.teamStanding || "");
+
+        var metrics = data.metrics || {};
+        setText("metricDeliveries", formatNumber(metrics.deliveries || 0));
+        setText("metricDcr", formatPercent(metrics.avgDcr));
+        setText("metricPod", formatPercent(metrics.avgPod));
+        setText("metricCc", formatPercent(metrics.avgCc));
+        renderMetricRank("metricDeliveriesRank", data.metricRanks && data.metricRanks.deliveries);
+        renderMetricRank("metricDcrRank", data.metricRanks && data.metricRanks.dcr);
+        renderMetricRank("metricPodRank", data.metricRanks && data.metricRanks.pod);
+        renderMetricRank("metricCcRank", data.metricRanks && data.metricRanks.cc);
+        renderMetricTrend("metricDeliveriesTrend", data.metricTrends && data.metricTrends.deliveries, { percent: true, label: "vs last week" });
+        renderMetricTrend("metricDcrTrend", data.metricTrends && data.metricTrends.dcr, { suffix: "pts" });
+        renderMetricTrend("metricPodTrend", data.metricTrends && data.metricTrends.pod, { suffix: "pts" });
+        renderMetricTrend("metricCcTrend", data.metricTrends && data.metricTrends.cc, { suffix: "pts" });
+
+        var rescues = data.rescues || {};
+        setText("rescuesGivenPerWeek", formatNumber(rescues.avgGivenPerWeek || 0));
+        setText("rescuesTakenPerWeek", formatNumber(rescues.avgTakenPerWeek || 0));
+        setText("rescuesGivenTotal", formatNumber(rescues.totalGiven || 0));
+        setText("rescuesTakenTotal", formatNumber(rescues.totalTaken || 0));
+
+        var comparisons = data.comparisons || {};
+        setDiffValue("comparisonScoreDiff", comparisons.scoreDiff, "pts");
+        setDiffValue("comparisonDeliveriesDiff", comparisons.deliveriesDiff, "");
+        setDiffValue("comparisonQualityDiff", comparisons.qualityDiff, "pts");
+        setDiffValue("comparisonRescueDiff", comparisons.rescueDiff, "");
+        setGapValue("comparisonScoreTop", comparisons.scoreVsTop, "pts");
+        setDiffValue("comparisonVolumeDiff", comparisons.deliveriesPerWeekDiff, "");
+        setDiffValue("comparisonWeeksDiff", comparisons.weeksDiff, "");
+        setText("comparisonScoreNote", comparisons.teamStanding || "");
+        setText(
+          "comparisonDeliveriesNote",
+          buildAvgNote(comparisons.averages && comparisons.averages.deliveries, "deliveries")
+        );
+        setText(
+          "comparisonQualityNote",
+          buildAvgNote(comparisons.averages && comparisons.averages.quality, "quality")
+        );
+        setText(
+          "comparisonRescueNote",
+          buildAvgNote(comparisons.averages && comparisons.averages.rescueBalance, "balance")
+        );
+        setText(
+          "comparisonPercentile",
+          comparisons.percentile != null
+            ? "Top " + comparisons.percentile + "%"
+            : "N/A"
+        );
+
+        var additional = data.additional || {};
+        setText("avgStopsValue", additional.avgStops != null ? additional.avgStops.toFixed(1) : "N/A");
+        setText("totalWeeksValue", formatNumber(additional.totalWeeks || 0));
+        setText("totalRoutesValue", formatNumber(additional.totalRoutes || 0));
+
+        var charts = data.charts || {};
+        renderDailyChart(charts);
+        renderRescueChart(charts);
+        renderScoreChart(charts);
+        renderSpotlight(data.spotlight || []);
+        renderHistory((data.history && data.history.weekly) || []);
+        renderTopRoutes((data.routes && data.routes.top) || []);
+      }
+
+      function setRankBadge(rank) {
+        var badge = document.getElementById("driverRankBadge");
+        if (!badge) return;
+        badge.classList.remove("top-1", "top-2", "top-3");
+        if (rank != null) {
+          badge.textContent = "#" + rank;
+          if (rank >= 1 && rank <= 3) {
+            badge.classList.add("top-" + rank);
+          }
+        } else {
+          badge.textContent = "Unranked";
+        }
+      }
+
+      function renderMetricRank(id, info) {
+        var el = document.getElementById(id);
+        if (!el) return;
+        if (!info || !info.rank) {
+          el.textContent = "No ranking yet";
+          return;
+        }
+        var text = "Top " + info.rank;
+        if (info.total) {
+          text += " of " + info.total;
+        }
+        el.textContent = text;
+      }
+
+      function renderMetricTrend(id, trend, opts) {
+        var el = document.getElementById(id);
+        if (!el) return;
+        el.classList.remove("positive", "negative");
+        if (!trend || trend.delta == null) {
+          el.textContent = "No change data yet";
+          return;
+        }
+        var prefix = trend.delta > 0 ? "+" : "";
+        var suffix = opts && opts.suffix ? " " + opts.suffix : "";
+        var label = opts && opts.label ? opts.label : "vs last week";
+        var arrow = trend.delta > 0 ? "▲" : trend.delta < 0 ? "▼" : "■";
+        var text;
+        if (opts && opts.percent && trend.percent != null) {
+          text = arrow + " " + prefix + trend.percent.toFixed(1) + "% " + label;
+        } else {
+          text = arrow + " " + prefix + trend.delta.toFixed(1) + suffix + " " + label;
+        }
+        el.textContent = text;
+        if (trend.delta > 0) el.classList.add("positive");
+        if (trend.delta < 0) el.classList.add("negative");
+      }
+
+      function renderDailyChart(charts) {
+        var points = charts.dailyDeliveries || [];
+        var canvas = document.getElementById("dailyChart");
+        var empty = document.getElementById("dailyChartEmpty");
+        var values = points.map(function (p) {
+          return Math.max(0, Math.round(p.value || 0));
+        });
+        var hasValue = values.some(function (val) {
+          return val > 0;
+        });
+        if (!hasValue) {
+          canvas.style.display = "none";
+          empty.style.display = "block";
+          return;
+        }
+        empty.style.display = "none";
+        canvas.style.display = "block";
+        if (dailyChart) dailyChart.destroy();
+        var observedMax = Math.max.apply(
+          null,
+          values.concat(charts.dailyMax || 0)
+        );
+        var maxY = observedMax ? observedMax * 1.15 : undefined;
+        dailyChart = new Chart(canvas.getContext("2d"), {
+          type: "bar",
+          data: {
+            labels: points.map(function (p) {
+              return formatChartLabel(p);
+            }),
+            datasets: [
+              {
+                data: values,
+                backgroundColor: "#60a5fa",
+                borderRadius: 8,
+                maxBarThickness: 32,
+              },
+            ],
+          },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: { legend: { display: false } },
+            scales: {
+              x: { grid: { display: false }, ticks: { color: "#6b7280" } },
+              y: {
+                beginAtZero: true,
+                suggestedMax: maxY,
+                grid: { color: "#e5e7eb" },
+                ticks: { color: "#6b7280" },
+              },
+            },
+          },
+        });
+      }
+
+      function renderRescueChart(charts) {
+        var points = charts.rescuesTrend || [];
+        var canvas = document.getElementById("rescueChart");
+        var empty = document.getElementById("rescueChartEmpty");
+        if (!points.length) {
+          canvas.style.display = "none";
+          empty.style.display = "block";
+          return;
+        }
+        var given = points.map(function (p) {
+          return p.given || 0;
+        });
+        var taken = points.map(function (p) {
+          return p.taken || 0;
+        });
+        var hasValue =
+          given.some(function (val) {
+            return val > 0;
+          }) ||
+          taken.some(function (val) {
+            return val > 0;
+          });
+        if (!hasValue) {
+          canvas.style.display = "none";
+          empty.style.display = "block";
+          return;
+        }
+        empty.style.display = "none";
+        canvas.style.display = "block";
+        if (rescueChart) rescueChart.destroy();
+        rescueChart = new Chart(canvas.getContext("2d"), {
+          type: "line",
+          data: {
+            labels: points.map(function (p) {
+              return p.label || "";
+            }),
+            datasets: [
+              {
+                label: "Given",
+                data: given,
+                borderColor: "#22c55e",
+                backgroundColor: "rgba(34,197,94,0.15)",
+                tension: 0.4,
+                pointRadius: 4,
+                fill: false,
+              },
+              {
+                label: "Taken",
+                data: taken,
+                borderColor: "#f97316",
+                backgroundColor: "rgba(249,115,22,0.15)",
+                tension: 0.4,
+                pointRadius: 4,
+                fill: false,
+              },
+            ],
+          },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: { legend: { position: "bottom" } },
+            scales: {
+              x: { grid: { display: false }, ticks: { color: "#6b7280" } },
+              y: {
+                beginAtZero: true,
+                grid: { color: "#e5e7eb" },
+                ticks: { color: "#6b7280" },
+              },
+            },
+          },
+        });
+      }
+
+      function renderScoreChart(charts) {
+        var points = charts.weeklyScores || [];
+        var canvas = document.getElementById("scoreChart");
+        var empty = document.getElementById("scoreChartEmpty");
+        if (!canvas || !empty) return;
+        var labels = [];
+        var values = [];
+        for (var i = 0; i < points.length; i++) {
+          if (points[i].score == null) continue;
+          labels.push(points[i].label || "");
+          values.push(points[i].score);
+        }
+        if (!values.length) {
+          canvas.style.display = "none";
+          empty.style.display = "block";
+          if (scoreChart) scoreChart.destroy();
+          return;
+        }
+        empty.style.display = "none";
+        canvas.style.display = "block";
+        if (scoreChart) scoreChart.destroy();
+        scoreChart = new Chart(canvas.getContext("2d"), {
+          type: "line",
+          data: {
+            labels: labels,
+            datasets: [
+              {
+                label: "Weekly score",
+                data: values,
+                borderColor: "#6366f1",
+                backgroundColor: "rgba(99,102,241,0.15)",
+                tension: 0.35,
+                pointRadius: 4,
+                fill: true,
+              },
+            ],
+          },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: { legend: { display: false } },
+            scales: {
+              x: { grid: { display: false }, ticks: { color: "#6b7280" } },
+              y: {
+                beginAtZero: false,
+                grid: { color: "#e5e7eb" },
+                ticks: { color: "#6b7280" },
+              },
+            },
+          },
+        });
+      }
+
+      function renderSpotlight(list) {
+        var grid = document.getElementById("spotlightGrid");
+        if (!grid) return;
+        if (!list.length) {
+          grid.innerHTML =
+            '<div class="muted">Keep building history to unlock highlights.</div>';
+          return;
+        }
+        grid.innerHTML = list
+          .map(function (item) {
+            return (
+              '<div class="spotlight-card"><strong>' +
+              (item.title || "") +
+              "</strong><span>" +
+              (item.detail || "") +
+              "</span></div>"
+            );
+          })
+          .join("");
+      }
+
+      function renderHistory(weeks) {
+        var container = document.getElementById("historyList");
+        if (!container) return;
+        if (!weeks.length) {
+          container.innerHTML =
+            '<li class="muted">No weekly scorecard history yet.</li>';
+          return;
+        }
+        var maxItems = Math.min(5, weeks.length);
+        var html = "";
+        for (var i = weeks.length - maxItems; i < weeks.length; i++) {
+          var row = weeks[i];
+          var labelParts = [];
+          if (row.week != null) {
+            labelParts.push("Week " + row.week);
+          }
+          if (row.weDate) {
+            labelParts.push(row.weDate);
+          }
+          var label = labelParts.length ? labelParts.join(" - ") : "Week detail";
+          var change = buildHistoryChange(row);
+          var scoreSnippet =
+            row.score != null
+              ? "Score " +
+                row.score.toFixed(1) +
+                (row.scoreChange != null
+                  ? " (" +
+                    (row.scoreChange > 0 ? "+" : "") +
+                    row.scoreChange.toFixed(1) +
+                    ")"
+                  : "")
+              : "";
+          html +=
+            '<li><div><strong>' +
+            label +
+            '</strong><div class="history-change ' +
+            change.className +
+            '">' +
+            change.label +
+            "</div></div><div class=\"history-value\">" +
+            formatNumber(row.delivered || 0) +
+            " deliveries" +
+            (scoreSnippet ? "<br><span class=\"muted\">" + scoreSnippet + "</span>" : "") +
+            "</div></li>";
+        }
+        container.innerHTML = html;
+      }
+
+      function renderTopRoutes(routes) {
+        var container = document.getElementById("routesList");
+        if (!container) return;
+        if (!routes.length) {
+          container.innerHTML =
+            '<li class="muted">Import more route history to highlight top lanes.</li>';
+          return;
+        }
+        container.innerHTML = routes
+          .map(function (route, idx) {
+            return (
+              '<li><span><span class="routes-badge">#' +
+              (idx + 1) +
+              "</span> " +
+              (route.route || "Route") +
+              '</span><span>' +
+              formatNumber(route.deliveries || 0) +
+              " deliveries</span></li>"
+            );
+          })
+          .join("");
+      }
+
+      function buildHistoryChange(row) {
+        if (!row || row.deliveredChange == null) {
+          return { label: "No prior data", className: "" };
+        }
+        var pct =
+          row.deliveredChangePct != null
+            ? Math.abs(row.deliveredChangePct).toFixed(1)
+            : null;
+        var direction =
+          row.deliveredChange > 0 ? "positive" : row.deliveredChange < 0 ? "negative" : "";
+        var label;
+        if (row.deliveredChange > 0) {
+          label =
+            (pct != null ? pct + "% " : "") + "more than previous week";
+        } else if (row.deliveredChange < 0) {
+          label =
+            (pct != null ? pct + "% " : "") + "down from previous week";
+        } else {
+          label = "Flat vs previous week";
+        }
+        return { label: label, className: direction };
+      }
+
+      function setDiffValue(id, value, suffix) {
+        var el = document.getElementById(id);
+        if (!el) return;
+        if (value == null) {
+          el.textContent = "N/A";
+          return;
+        }
+        var prefix = value > 0 ? "+" : "";
+        el.textContent = prefix + value.toFixed(1) + (suffix || "");
+      }
+
+      function setGapValue(id, value, suffix) {
+        var el = document.getElementById(id);
+        if (!el) return;
+        if (value == null) {
+          el.textContent = "N/A";
+          return;
+        }
+        el.textContent = Math.abs(value).toFixed(1) + (suffix || "");
+      }
+
+      function buildAvgNote(avg, label) {
+        if (avg == null) return "Team average unavailable";
+        return "Team avg " + avg.toFixed(1) + (label ? " " + label : "");
+      }
+
+      function setLoading(isLoading, message) {
+        var overlay = document.getElementById("loadingOverlay");
+        var label = document.getElementById("loadingMessage");
+        if (!overlay) return;
+        if (isLoading) {
+          if (label && message) label.textContent = message;
+          overlay.style.display = "flex";
+        } else {
+          overlay.style.display = "none";
+        }
+      }
+
+      function showError(msg) {
+        var banner = document.getElementById("errorBanner");
+        if (!banner) return;
+        if (msg) {
+          banner.textContent = msg;
+          banner.style.display = "block";
+        } else {
+          banner.textContent = "";
+          banner.style.display = "none";
+        }
+      }
+
+      function setText(id, value) {
+        var el = document.getElementById(id);
+        if (el) {
+          el.textContent = value == null ? "" : value;
+        }
+      }
+
+      function formatNumber(value) {
+        if (value === null || value === undefined) return "0";
+        return Number(value).toLocaleString();
+      }
+
+      function formatPercent(value) {
+        if (value === null || value === undefined || value === "") return "N/A";
+        return Number(value).toFixed(1) + "%";
+      }
+
+      function buildInitials(name) {
+        if (!name) return "--";
+        var parts = name.trim().split(/\s+/);
+        var first = parts[0] ? parts[0].charAt(0) : "";
+        var second = parts.length > 1 ? parts[parts.length - 1].charAt(0) : "";
+        var initials = (first + second).toUpperCase();
+        return initials || name.charAt(0).toUpperCase();
+      }
+
+      function actionComingSoon(type) {
+        var label = type ? type.toUpperCase() : "this option";
+        alert("Scorecard sharing via " + label + " is coming soon.");
+      }
+
+      function formatChartLabel(point) {
+        if (!point) return "";
+        var dateText = point.key ? formatShortDate(point.key) : "";
+        var base = point.label || "";
+        return dateText ? base + " (" + dateText + ")" : base;
+      }
+
+      function formatShortDate(key) {
+        if (!key) return "";
+        var parts = String(key).split("-");
+        if (parts.length !== 3) return "";
+        return parts[2] + "/" + parts[1];
+      }
+    </script>
+  </body>
+</html>

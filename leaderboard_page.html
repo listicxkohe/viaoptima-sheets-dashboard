@@ -202,12 +202,24 @@
 
       .btn-scorecard {
         border-radius: 999px;
-        padding: 3px 8px;
+        padding: 4px 10px;
         font-size: 11px;
-        border: 1px solid #d1d5db;
-        background: #f9fafb;
+        border: 1px solid #bfdbfe;
+        background: #eff6ff;
+        color: #1d4ed8;
+        cursor: pointer;
+        transition: background 0.15s ease, transform 0.15s ease;
+      }
+      .btn-scorecard:hover:not([disabled]) {
+        background: #dbeafe;
+        transform: translateY(-1px);
+      }
+      .btn-scorecard[disabled] {
         cursor: not-allowed;
+        background: #f3f4f6;
+        border-color: #e5e7eb;
         color: #9ca3af;
+        transform: none;
       }
 
       .muted {
@@ -403,6 +415,35 @@
         });
       }
 
+      function openScorecard(transporterId, driverName, buttonEl) {
+        if (!transporterId) return;
+        var btn = buttonEl || null;
+        if (btn) {
+          btn.disabled = true;
+          btn.dataset.originalLabel = btn.dataset.originalLabel || btn.textContent;
+          btn.textContent = "Opening...";
+        }
+        setStatus("Opening scorecard for " + (driverName || transporterId) + "...");
+        google.script.run
+          .withSuccessHandler(function () {
+            setStatus("Scorecard opened for " + (driverName || transporterId) + ".");
+            if (btn) {
+              btn.disabled = false;
+              btn.textContent = btn.dataset.originalLabel || "Scorecard";
+            }
+          })
+          .withFailureHandler(function (err) {
+            var message = err && err.message ? err.message : "Unknown error";
+            setStatus("Failed to open scorecard: " + message);
+            if (btn) {
+              btn.disabled = false;
+              btn.textContent = btn.dataset.originalLabel || "Scorecard";
+            }
+            alert("Could not open scorecard:\n" + message);
+          })
+          .openDriverScorecardDialog(transporterId, driverName || "");
+      }
+
       function renderTable() {
         const tb = document.getElementById('tbody');
         if (!filteredRows.length) {
@@ -429,6 +470,10 @@
           const pod = row.pod != null ? formatPercent(row.pod) : 'NA';
           const cc  = row.cc  != null ? formatPercent(row.cc)  : 'NA';
           const score = row.score != null ? row.score.toFixed(1) : 'NA';
+          const encodedName = encodeURIComponent(row.name || '');
+          const buttonCell = row.transporterId
+            ? `<button class="btn-scorecard" data-id="${row.transporterId}" data-name="${encodedName}">Scorecard</button>`
+            : '<span class="muted">ID missing</span>';
 
           return `
             <tr>
@@ -446,11 +491,18 @@
               <td>${pod}</td>
               <td>${cc}</td>
               <td>${score !== 'NA' ? `<span class="score-pill">${score}</span>` : '<span class="muted">N/A</span>'}</td>
-              <td><button class="btn-scorecard" title="Coming soon">Scorecard</button></td>
+              <td>${buttonCell}</td>
             </tr>`;
         }).join('');
 
         tb.innerHTML = rowsHtml;
+        var scoreButtons = tb.querySelectorAll('.btn-scorecard');
+        for (var i = 0; i < scoreButtons.length; i++) {
+          scoreButtons[i].addEventListener('click', function () {
+            var driverName = decodeURIComponent(this.getAttribute('data-name') || '');
+            openScorecard(this.getAttribute('data-id'), driverName, this);
+          });
+        }
       }
 
       // Wire up events
