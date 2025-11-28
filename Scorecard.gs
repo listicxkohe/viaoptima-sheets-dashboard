@@ -2,16 +2,6 @@
  * DRIVER SCORECARD - SERVER SIDE
  ************************************************/
 
-var SCORECARD_CONFIG = {
-  SCORE_SHEET:
-    (typeof CONFIG !== "undefined" && CONFIG.SCORE_SHEET) || "Weekly-scoreboard",
-  MASTER_SHEET:
-    (typeof CONFIG !== "undefined" && CONFIG.MASTER_SHEET) || "masterlist",
-  COMPLETE_ROUTES_SHEET:
-    (typeof CONFIG !== "undefined" && CONFIG.COMPLETE_ROUTES_SHEET) ||
-    "Complete route list",
-};
-
 function openDriverScorecardDialog(transporterId, driverName) {
   var id = sanitizeTransporterId_(transporterId);
   if (!id) {
@@ -33,22 +23,18 @@ function getDriverScorecardData(transporterId) {
     throw new Error("Transporter ID is required.");
   }
 
-  var ss = SpreadsheetApp.getActive();
-  var tz = ss.getSpreadsheetTimeZone() || "Etc/UTC";
-  var scoreSheet = ss.getSheetByName(SCORECARD_CONFIG.SCORE_SHEET);
-  var masterSheet = ss.getSheetByName(SCORECARD_CONFIG.MASTER_SHEET);
-  var completeSheet = ss.getSheetByName(SCORECARD_CONFIG.COMPLETE_ROUTES_SHEET);
+  var scoreSheet = getSheetByKey_("scoreSheet");
+  var masterSheet = getSheetByKey_("masterSheet");
+  var completeSheet = getSheetByKey_("completeSheet", { optional: true });
 
   if (!scoreSheet) {
-    throw new Error(
-      "Scoreboard sheet not found: " + SCORECARD_CONFIG.SCORE_SHEET
-    );
+    throw new Error("Scoreboard sheet not found or not configured.");
   }
   if (!masterSheet) {
-    throw new Error(
-      "Masterlist sheet not found: " + SCORECARD_CONFIG.MASTER_SHEET
-    );
+    throw new Error("Masterlist sheet not found or not configured.");
   }
+
+  var tz = scoreSheet.getParent().getSpreadsheetTimeZone() || "Etc/UTC";
 
   var masterInfo = loadScorecardMaster_(masterSheet, id);
   var weeklyInfo = collectWeeklyScorecardStats_(scoreSheet, id, tz);
@@ -82,7 +68,7 @@ function getDriverScorecardData(transporterId) {
     weeklyInfo.lastStatus ||
     "Status unknown";
 
-  return {
+  var payload = {
     driver: {
       name: driverName,
       transporterId: id,
@@ -134,6 +120,8 @@ function getDriverScorecardData(transporterId) {
       weekly: weeklyInfo.weeklyRows,
     },
   };
+
+  return payload;
 }
 
 function loadScorecardMaster_(sheet, transporterId) {
@@ -460,6 +448,7 @@ function collectRouteScorecardStats_(sheet, transporterId, driverNameCandidates,
   var dateKeySet = {};
   var weeklyMap = {};
   var routeTotals = {};
+  var latestDate = null;
   var summary = {
     totalRoutes: 0,
     onTimeRoutes: 0,
@@ -515,6 +504,9 @@ function collectRouteScorecardStats_(sheet, transporterId, driverNameCandidates,
             : "";
 
         var dateKey = Utilities.formatDate(date, tz, "yyyy-MM-dd");
+        if (!latestDate || date.getTime() > latestDate.getTime()) {
+          latestDate = new Date(date.getTime());
+        }
         var driverMatch =
           driverCell && driverNameSet[driverCell.toLowerCase()] ? true : false;
         var isDriverRow =
@@ -526,7 +518,8 @@ function collectRouteScorecardStats_(sheet, transporterId, driverNameCandidates,
           summary.totalStops += allStops;
           summary.stopsComplete += stopsComplete;
 
-          var deliveredCount = stopsComplete > 0 ? stopsComplete : allStops;
+          // Use planned stops for delivery volume; do not fall back to stops complete.
+          var deliveredCount = allStops || 0;
           dailyTotals[keySafe_(dateKey)] =
             (dailyTotals[keySafe_(dateKey)] || 0) + (deliveredCount || 0);
           dateKeySet[dateKey] = true;
@@ -566,23 +559,40 @@ function collectRouteScorecardStats_(sheet, transporterId, driverNameCandidates,
     return a.date.getTime() - b.date.getTime();
   });
 
-  var baseDate = getTodayForTimezone_(tz);
-  var bucketInfo = buildDailyBuckets_(tz, baseDate);
-  var buckets = bucketInfo.buckets;
-  var bucketKeyMap = bucketInfo.keyMap;
-  var maxDailyValue = 0;
+  // Anchor weeks to the current calendar week (Sun–Sat) so "current" and "last" are distinct,
+  // regardless of the last route date imported.
+  // Anchor to the latest route date when available; otherwise use "today".
+  var baseDate = latestDate ? new Date(latestDate.getTime()) : getTodayForTimezone_(tz);
+  var currentStart = getSundayStart_(baseDate, tz);
+  var lastStart = new Date(currentStart.getTime());
+  lastStart.setDate(currentStart.getDate() - 7);
 
-  for (var b = 0; b < buckets.length; b++) {
-    var bucket = buckets[b];
+  var bucketsCurrent = buildWeekBuckets_(tz, currentStart);
+  var bucketsLast = buildWeekBuckets_(tz, lastStart);
+
+  var maxCurrent = 0;
+  for (var b = 0; b < bucketsCurrent.buckets.length; b++) {
+    var bucket = bucketsCurrent.buckets[b];
     var key = keySafe_(bucket.key);
     var val = dailyTotals[key] || 0;
     bucket.value = val;
-    if (val > maxDailyValue) maxDailyValue = val;
+    if (val > maxCurrent) maxCurrent = val;
   }
+  bucketsCurrent.max = maxCurrent;
+
+  var maxLast = 0;
+  for (var b2 = 0; b2 < bucketsLast.buckets.length; b2++) {
+    var bucket2 = bucketsLast.buckets[b2];
+    var key2 = keySafe_(bucket2.key);
+    var val2 = dailyTotals[key2] || 0;
+    bucket2.value = val2;
+    if (val2 > maxLast) maxLast = val2;
+  }
+  bucketsLast.max = maxLast;
 
   var routesThisWeek = 0;
   for (var r = 0; r < driverRouteRecords.length; r++) {
-    if (bucketKeyMap[keySafe_(driverRouteRecords[r].key)]) {
+    if (bucketsCurrent.keyMap[keySafe_(driverRouteRecords[r].key)]) {
       routesThisWeek++;
     }
   }
@@ -644,31 +654,44 @@ function collectRouteScorecardStats_(sheet, transporterId, driverNameCandidates,
   };
 
   return {
-    dailyBuckets: buckets,
-    dailyMax: maxDailyValue,
+    dailyBuckets: bucketsCurrent.buckets,
+    dailyMax: bucketsCurrent.max,
+    weeklyBuckets: {
+      current: bucketsCurrent,
+      last: bucketsLast,
+    },
     weeklyTrend: weeklyTrend,
     summary: resultSummary,
     topRoutes: topRoutes,
   };
 }
 
-function buildDailyBuckets_(tz, baseDate) {
-  var anchor = baseDate ? new Date(baseDate.getTime()) : new Date();
+function getSundayStart_(date, tz) {
+  var d = date ? new Date(date.getTime()) : new Date();
+  d.setHours(0, 0, 0, 0);
+  var day = parseInt(Utilities.formatDate(d, tz, "u"), 10); // 1=Mon..7=Sun
+  var delta = day === 7 ? 0 : day;
+  d.setDate(d.getDate() - delta);
+  d.setHours(0, 0, 0, 0);
+  return d;
+}
+
+function buildWeekBuckets_(tz, startDate) {
+  var anchor = startDate ? new Date(startDate.getTime()) : new Date();
   anchor.setHours(0, 0, 0, 0);
   var buckets = [];
   var map = {};
 
-  for (var offset = 6; offset >= 0; offset--) {
+  for (var offset = 0; offset < 7; offset++) {
     var d = new Date(anchor.getTime());
-    d.setDate(anchor.getDate() - offset);
+    d.setDate(anchor.getDate() + offset);
     var key = Utilities.formatDate(d, tz, "yyyy-MM-dd");
     var label = Utilities.formatDate(d, tz, "EEE");
-    var bucket = { key: key, label: label, value: 0 };
-    buckets.push(bucket);
+    buckets.push({ key: key, label: label, value: 0 });
     map[keySafe_(key)] = true;
   }
 
-  return { buckets: buckets, keyMap: map };
+  return { buckets: buckets, keyMap: map, start: anchor };
 }
 
 function parseDateCell_(value) {
@@ -907,7 +930,7 @@ function buildSpotlightHighlights_(metricRanks, topRoutes, leaderRow) {
     if (info && info.rank && info.rank <= 5) {
       var descriptor = info.rank <= 3 ? "Top " + info.rank : "Top 5";
       highlights.push({
-        title: "🏅 " + descriptor + " in " + metricNames[key],
+        title: "?? " + descriptor + " in " + metricNames[key],
         detail: "Ranked " + info.rank + " of " + (info.total || "-"),
       });
     }
@@ -915,13 +938,13 @@ function buildSpotlightHighlights_(metricRanks, topRoutes, leaderRow) {
 
   if (leaderRow && leaderRow.rescuesGiven) {
     highlights.push({
-      title: "🤝 Rescue hero",
+      title: "?? Rescue hero",
       detail: (leaderRow.rescuesGiven || 0) + " rescues given",
     });
   }
   if (leaderRow && leaderRow.rescuesTaken) {
     highlights.push({
-      title: "🆘 Support ready",
+      title: "?? Support ready",
       detail: (leaderRow.rescuesTaken || 0) + " rescues received",
     });
   }
@@ -929,7 +952,7 @@ function buildSpotlightHighlights_(metricRanks, topRoutes, leaderRow) {
   if (topRoutes.length) {
     var topRoute = topRoutes[0];
     highlights.push({
-      title: "🚚 Route " + (topRoute.route || ""),
+      title: "??? Route " + (topRoute.route || ""),
       detail: (topRoute.deliveries || 0) + " deliveries handled",
     });
   }

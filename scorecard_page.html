@@ -11,7 +11,7 @@
       .avatar { width: 72px; height: 72px; border-radius: 18px; background: linear-gradient(145deg,#2563eb,#3b82f6); color: #fff; font-size: 28px; font-weight: 600; display: flex; align-items: center; justify-content: center; }
       .driver-name { font-size: 20px; font-weight: 600; margin-bottom: 4px; }
       .driver-meta, .driver-note { font-size: 12px; color: #6b7280; }
-      .driver-actions { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+      .driver-actions { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; justify-content: space-between; flex: 1; }
       .back-btn { border: none; border-radius: 999px; padding: 8px 18px; background: #e0e7ff; color: #1d4ed8; font-weight: 600; cursor: pointer; }
       .back-btn:hover { background: #c7d2fe; }
       .driver-rank { display:flex; align-items:center; gap:12px; }
@@ -24,6 +24,8 @@
       .score-label { text-transform:uppercase; font-size:11px; color:#6b7280; letter-spacing:0.04em; }
       .score-value { font-size:32px; font-weight:700; }
       .rank-standing { font-size:12px; color:#6b7280; }
+      .control-actions { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+      .control-actions .action-btn { padding:8px 14px; }
       .metrics-row { display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:12px; margin:18px 0; }
       .metric-card { background:#fff; border-radius:16px; padding:14px 16px; box-shadow:0 10px 18px rgba(15,23,42,0.08); }
       .metric-label { text-transform:uppercase; font-size:11px; color:inherit; letter-spacing:0.04em; }
@@ -37,6 +39,11 @@
       @media (max-width: 1200px) {
         .comparison-layout { grid-template-columns:1fr; }
       }
+<<<<<<< ours
+=======
+      .toolbar-card { background:#fff; border-radius:14px; padding:12px 16px; box-shadow:0 10px 18px rgba(15,23,42,0.08); display:flex; justify-content:flex-end; gap:10px; align-items:center; margin-bottom:12px; }
+      .no-export { }
+>>>>>>> theirs
       .panel { background:#fff; border-radius:20px; padding:18px; box-shadow:0 12px 24px rgba(15,23,42,0.08); }
       .panel.large { min-height:280px; }
       .panel-title { font-size:14px; font-weight:600; margin-bottom:6px; }
@@ -45,6 +52,11 @@
       .chart-container.score-chart { height:200px; }
       #dailyChart,#rescueChart,#scoreChart { width:100%; height:100%; display:none; }
       .chart-empty { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; font-size:12px; color:#9ca3af; text-align:center; padding:20px; }
+<<<<<<< ours
+=======
+      .chart-header { display:flex; align-items:center; justify-content:space-between; gap:10px; }
+      .chart-select { padding:6px 10px; border-radius:10px; border:1px solid #e5e7eb; background:#fff; font-size:12px; color:#374151; }
+>>>>>>> theirs
       .rescue-grid { display:flex; gap:12px; flex-wrap:wrap; margin:12px 0; }
       .rescue-card { flex:1 1 120px; border-radius:12px; padding:12px; background:#f8fafc; }
       .rescue-total { flex:1 1 120px; border-radius:12px; padding:14px; color:#fff; font-weight:600; }
@@ -86,6 +98,13 @@
       .error-banner { display:none; background:#fee2e2; color:#b91c1c; border-radius:12px; padding:10px 14px; margin-bottom:12px; font-size:12px; }      </style>
   </head>
   <body>
+<<<<<<< ours
+=======
+    <div class="toolbar-card no-export">
+      <button class="back-btn" id="btnBack">Back to leaderboard</button>
+      <button class="action-btn primary" id="btnDownloadPdf">Download PDF</button>
+    </div>
+>>>>>>> theirs
     <div class="scorecard-shell">
       <div class="loading-overlay" id="loadingOverlay">
         <div class="loading-box">
@@ -111,6 +130,7 @@
             <div class="driver-note" id="driverWeeks"></div>
           </div>
         </div>
+<<<<<<< ours
         <div class="driver-actions">
           <button class="back-btn" id="btnBack">← Back to leaderboard</button>
           <div class="driver-rank">
@@ -120,6 +140,10 @@
               <div class="score-value" id="driverScore">0.0</div>
               <div class="rank-standing" id="driverStanding"></div>
             </div>
+          </div>
+          <div class="control-actions no-export">
+            <button class="back-btn action-btn" id="btnBack">← Back to leaderboard</button>
+            <button class="action-btn primary" id="btnDownloadPdf">Download PDF</button>
           </div>
         </div>
       </div>
@@ -153,7 +177,17 @@
 
       <div class="content-grid">
         <div class="panel large">
+<<<<<<< ours
           <div class="panel-title">Daily deliveries (last 7 days)</div>
+=======
+          <div class="chart-header">
+            <div class="panel-title">Daily deliveries by week</div>
+            <select class="chart-select" id="dailyWeekSelect">
+              <option value="current">Current week (Sun-Sat)</option>
+              <option value="last">Last week (Sun-Sat)</option>
+            </select>
+          </div>
+>>>>>>> theirs
           <div class="chart-container">
             <canvas id="dailyChart"></canvas>
             <div class="chart-empty" id="dailyChartEmpty">No deliveries captured for the latest week.</div>
@@ -282,12 +316,7 @@
         </div>
       </div>
 
-      <div class="actions-row">
-        <button class="action-btn" data-type="email">Email</button>
-        <button class="action-btn" data-type="whatsapp">WhatsApp</button>
-        <button class="action-btn" data-type="sms">SMS</button>
-        <button class="action-btn primary" id="btnDownloadPdf">Download PDF</button>
-      </div>
+      <!-- Removed bottom action row; controls moved into header -->
     </div>
 
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
@@ -296,22 +325,42 @@
     <script>
       const SCORECARD_TRANSPORTER_ID = <?!= JSON.stringify(transporterId || "") ?>;
       const INITIAL_DRIVER_NAME = <?!= JSON.stringify(driverName || "") ?>;
+<<<<<<< ours
+<<<<<<< ours
       let dailyChart = null;
       let rescueChart = null;
       let scoreChart = null;
 
       document.addEventListener("DOMContentLoaded", function () {
+=======
+      let transporterIdValue = SCORECARD_TRANSPORTER_ID || "";
+      let initialDriverNameValue = INITIAL_DRIVER_NAME || "";
+      let transporterIdValue = SCORECARD_TRANSPORTER_ID;
+=======
+>>>>>>> theirs
+      let dailyChart = null;
+      let rescueChart = null;
+      let scoreChart = null;
+      let dailyWeekSelection = "current";
+      let cachedCharts = null;
+
+      document.addEventListener("DOMContentLoaded", function () {
+<<<<<<< ours
+        // Fallback: if transporterId not injected, try query string ?id=.
+        if (!transporterIdValue) {
+          var params = new URLSearchParams(window.location.search || "");
+          var qId = params.get("id") || "";
+          if (qId) {
+            transporterIdValue = qId;
+          }
+        }
+>>>>>>> theirs
+=======
+>>>>>>> theirs
         if (INITIAL_DRIVER_NAME) {
           setText("driverName", INITIAL_DRIVER_NAME);
           setText("driverAvatar", buildInitials(INITIAL_DRIVER_NAME));
         }
-        document
-          .querySelectorAll(".action-btn[data-type]")
-          .forEach(function (btn) {
-            btn.addEventListener("click", function () {
-              actionComingSoon(this.getAttribute("data-type"));
-            });
-          });
         var backBtn = document.getElementById("btnBack");
         if (backBtn) {
           backBtn.addEventListener("click", handleBackAction);
@@ -320,11 +369,29 @@
         if (pdfBtn) {
           pdfBtn.addEventListener("click", startPdfDownload);
         }
+<<<<<<< ours
+=======
+        var weekSelect = document.getElementById("dailyWeekSelect");
+        if (weekSelect) {
+          weekSelect.addEventListener("change", function (e) {
+            dailyWeekSelection = e.target.value || "current";
+            renderDailyChart(cachedCharts || {});
+          });
+        }
+>>>>>>> theirs
         fetchScorecard();
       });
 
       function fetchScorecard() {
+<<<<<<< ours
+<<<<<<< ours
         if (!SCORECARD_TRANSPORTER_ID) {
+=======
+        if (!transporterIdValue) {
+>>>>>>> theirs
+=======
+        if (!SCORECARD_TRANSPORTER_ID) {
+>>>>>>> theirs
           showError("Transporter ID is missing for this scorecard.");
           return;
         }
@@ -396,6 +463,16 @@
             throw new Error("Scorecard container not found.");
           }
           window.scrollTo(0, 0);
+<<<<<<< ours
+=======
+          var hideNodes = Array.prototype.slice.call(document.querySelectorAll(".no-export"));
+          var hiddenStates = hideNodes.map(function (el) {
+            return { el: el, visibility: el.style.visibility };
+          });
+          hideNodes.forEach(function (el) {
+            el.style.visibility = "hidden";
+          });
+>>>>>>> theirs
           var overlay = document.getElementById("loadingOverlay");
           var priorOverlayDisplay = overlay ? overlay.style.display : null;
           if (overlay) overlay.style.display = "none";
@@ -403,12 +480,20 @@
             scale: 2,
             useCORS: true,
             ignoreElements: function (el) {
-              return el && el.id === "loadingOverlay";
+              if (el && el.id === "loadingOverlay") return true;
+              return el && el.classList && el.classList.contains("no-export");
             },
           });
           if (overlay && priorOverlayDisplay !== null) {
             overlay.style.display = priorOverlayDisplay;
           }
+<<<<<<< ours
+=======
+          hideNodes.forEach(function (_, idx) {
+            var state = hiddenStates[idx];
+            if (state && state.el) state.el.style.visibility = state.visibility;
+          });
+>>>>>>> theirs
           var imgData = canvas.toDataURL("image/png");
           // Build a single-page PDF sized to the rendered canvas to avoid mid-content page breaks.
           var pdf = new jspdf.jsPDF("p", "px", [canvas.width, canvas.height]);
@@ -506,6 +591,13 @@
         setText("totalRoutesValue", formatNumber(additional.totalRoutes || 0));
 
         var charts = data.charts || {};
+<<<<<<< ours
+=======
+        cachedCharts = charts;
+        dailyWeekSelection = "current";
+        var weekSelect = document.getElementById("dailyWeekSelect");
+        if (weekSelect) weekSelect.value = "current";
+>>>>>>> theirs
         renderDailyChart(charts);
         renderRescueChart(charts);
         renderScoreChart(charts);
@@ -566,10 +658,31 @@
       }
 
       function renderDailyChart(charts) {
+<<<<<<< ours
         var points = charts.dailyDeliveries || [];
         var canvas = document.getElementById("dailyChart");
         var empty = document.getElementById("dailyChartEmpty");
         var values = points.map(function (p) {
+=======
+        cachedCharts = charts;
+        var selection = dailyWeekSelection || "current";
+        var buckets = null;
+        var maxValue = 0;
+        if (charts && charts.weeklyBuckets) {
+          var wk = charts.weeklyBuckets[selection];
+          if (wk && wk.buckets) {
+            buckets = wk.buckets;
+            maxValue = wk.max || 0;
+          }
+        }
+        if (!buckets) {
+          buckets = (charts && charts.dailyDeliveries) || [];
+          maxValue = (charts && charts.dailyMax) || 0;
+        }
+        var canvas = document.getElementById("dailyChart");
+        var empty = document.getElementById("dailyChartEmpty");
+        var values = buckets.map(function (p) {
+>>>>>>> theirs
           return Math.max(0, Math.round(p.value || 0));
         });
         var hasValue = values.some(function (val) {
@@ -583,15 +696,23 @@
         empty.style.display = "none";
         canvas.style.display = "block";
         if (dailyChart) dailyChart.destroy();
+<<<<<<< ours
         var observedMax = Math.max.apply(
           null,
           values.concat(charts.dailyMax || 0)
         );
+=======
+        var observedMax = Math.max.apply(null, values.concat(maxValue || 0));
+>>>>>>> theirs
         var maxY = observedMax ? observedMax * 1.15 : undefined;
         dailyChart = new Chart(canvas.getContext("2d"), {
           type: "bar",
           data: {
+<<<<<<< ours
             labels: points.map(function (p) {
+=======
+            labels: buckets.map(function (p) {
+>>>>>>> theirs
               return formatChartLabel(p);
             }),
             datasets: [
