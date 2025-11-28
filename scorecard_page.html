@@ -39,11 +39,6 @@
       @media (max-width: 1200px) {
         .comparison-layout { grid-template-columns:1fr; }
       }
-<<<<<<< ours
-=======
-      .toolbar-card { background:#fff; border-radius:14px; padding:12px 16px; box-shadow:0 10px 18px rgba(15,23,42,0.08); display:flex; justify-content:flex-end; gap:10px; align-items:center; margin-bottom:12px; }
-      .no-export { }
->>>>>>> theirs
       .panel { background:#fff; border-radius:20px; padding:18px; box-shadow:0 12px 24px rgba(15,23,42,0.08); }
       .panel.large { min-height:280px; }
       .panel-title { font-size:14px; font-weight:600; margin-bottom:6px; }
@@ -52,11 +47,8 @@
       .chart-container.score-chart { height:200px; }
       #dailyChart,#rescueChart,#scoreChart { width:100%; height:100%; display:none; }
       .chart-empty { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; font-size:12px; color:#9ca3af; text-align:center; padding:20px; }
-<<<<<<< ours
-=======
       .chart-header { display:flex; align-items:center; justify-content:space-between; gap:10px; }
       .chart-select { padding:6px 10px; border-radius:10px; border:1px solid #e5e7eb; background:#fff; font-size:12px; color:#374151; }
->>>>>>> theirs
       .rescue-grid { display:flex; gap:12px; flex-wrap:wrap; margin:12px 0; }
       .rescue-card { flex:1 1 120px; border-radius:12px; padding:12px; background:#f8fafc; }
       .rescue-total { flex:1 1 120px; border-radius:12px; padding:14px; color:#fff; font-weight:600; }
@@ -98,13 +90,6 @@
       .error-banner { display:none; background:#fee2e2; color:#b91c1c; border-radius:12px; padding:10px 14px; margin-bottom:12px; font-size:12px; }      </style>
   </head>
   <body>
-<<<<<<< ours
-=======
-    <div class="toolbar-card no-export">
-      <button class="back-btn" id="btnBack">Back to leaderboard</button>
-      <button class="action-btn primary" id="btnDownloadPdf">Download PDF</button>
-    </div>
->>>>>>> theirs
     <div class="scorecard-shell">
       <div class="loading-overlay" id="loadingOverlay">
         <div class="loading-box">
@@ -130,9 +115,7 @@
             <div class="driver-note" id="driverWeeks"></div>
           </div>
         </div>
-<<<<<<< ours
         <div class="driver-actions">
-          <button class="back-btn" id="btnBack">← Back to leaderboard</button>
           <div class="driver-rank">
             <div class="rank-chip" id="driverRankBadge">#</div>
             <div class="score-box">
@@ -177,17 +160,13 @@
 
       <div class="content-grid">
         <div class="panel large">
-<<<<<<< ours
-          <div class="panel-title">Daily deliveries (last 7 days)</div>
-=======
           <div class="chart-header">
             <div class="panel-title">Daily deliveries by week</div>
             <select class="chart-select" id="dailyWeekSelect">
-              <option value="current">Current week (Sun-Sat)</option>
-              <option value="last">Last week (Sun-Sat)</option>
+              <option value="current">Current week (Sun–Sat)</option>
+              <option value="last">Last week (Sun–Sat)</option>
             </select>
           </div>
->>>>>>> theirs
           <div class="chart-container">
             <canvas id="dailyChart"></canvas>
             <div class="chart-empty" id="dailyChartEmpty">No deliveries captured for the latest week.</div>
@@ -325,19 +304,6 @@
     <script>
       const SCORECARD_TRANSPORTER_ID = <?!= JSON.stringify(transporterId || "") ?>;
       const INITIAL_DRIVER_NAME = <?!= JSON.stringify(driverName || "") ?>;
-<<<<<<< ours
-<<<<<<< ours
-      let dailyChart = null;
-      let rescueChart = null;
-      let scoreChart = null;
-
-      document.addEventListener("DOMContentLoaded", function () {
-=======
-      let transporterIdValue = SCORECARD_TRANSPORTER_ID || "";
-      let initialDriverNameValue = INITIAL_DRIVER_NAME || "";
-      let transporterIdValue = SCORECARD_TRANSPORTER_ID;
-=======
->>>>>>> theirs
       let dailyChart = null;
       let rescueChart = null;
       let scoreChart = null;
@@ -345,18 +311,6 @@
       let cachedCharts = null;
 
       document.addEventListener("DOMContentLoaded", function () {
-<<<<<<< ours
-        // Fallback: if transporterId not injected, try query string ?id=.
-        if (!transporterIdValue) {
-          var params = new URLSearchParams(window.location.search || "");
-          var qId = params.get("id") || "";
-          if (qId) {
-            transporterIdValue = qId;
-          }
-        }
->>>>>>> theirs
-=======
->>>>>>> theirs
         if (INITIAL_DRIVER_NAME) {
           setText("driverName", INITIAL_DRIVER_NAME);
           setText("driverAvatar", buildInitials(INITIAL_DRIVER_NAME));
@@ -369,8 +323,6 @@
         if (pdfBtn) {
           pdfBtn.addEventListener("click", startPdfDownload);
         }
-<<<<<<< ours
-=======
         var weekSelect = document.getElementById("dailyWeekSelect");
         if (weekSelect) {
           weekSelect.addEventListener("change", function (e) {
@@ -378,20 +330,11 @@
             renderDailyChart(cachedCharts || {});
           });
         }
->>>>>>> theirs
         fetchScorecard();
       });
 
       function fetchScorecard() {
-<<<<<<< ours
-<<<<<<< ours
         if (!SCORECARD_TRANSPORTER_ID) {
-=======
-        if (!transporterIdValue) {
->>>>>>> theirs
-=======
-        if (!SCORECARD_TRANSPORTER_ID) {
->>>>>>> theirs
           showError("Transporter ID is missing for this scorecard.");
           return;
         }
@@ -463,16 +406,6 @@
             throw new Error("Scorecard container not found.");
           }
           window.scrollTo(0, 0);
-<<<<<<< ours
-=======
-          var hideNodes = Array.prototype.slice.call(document.querySelectorAll(".no-export"));
-          var hiddenStates = hideNodes.map(function (el) {
-            return { el: el, visibility: el.style.visibility };
-          });
-          hideNodes.forEach(function (el) {
-            el.style.visibility = "hidden";
-          });
->>>>>>> theirs
           var overlay = document.getElementById("loadingOverlay");
           var priorOverlayDisplay = overlay ? overlay.style.display : null;
           if (overlay) overlay.style.display = "none";
@@ -487,13 +420,6 @@
           if (overlay && priorOverlayDisplay !== null) {
             overlay.style.display = priorOverlayDisplay;
           }
-<<<<<<< ours
-=======
-          hideNodes.forEach(function (_, idx) {
-            var state = hiddenStates[idx];
-            if (state && state.el) state.el.style.visibility = state.visibility;
-          });
->>>>>>> theirs
           var imgData = canvas.toDataURL("image/png");
           // Build a single-page PDF sized to the rendered canvas to avoid mid-content page breaks.
           var pdf = new jspdf.jsPDF("p", "px", [canvas.width, canvas.height]);
@@ -591,13 +517,10 @@
         setText("totalRoutesValue", formatNumber(additional.totalRoutes || 0));
 
         var charts = data.charts || {};
-<<<<<<< ours
-=======
         cachedCharts = charts;
         dailyWeekSelection = "current";
         var weekSelect = document.getElementById("dailyWeekSelect");
         if (weekSelect) weekSelect.value = "current";
->>>>>>> theirs
         renderDailyChart(charts);
         renderRescueChart(charts);
         renderScoreChart(charts);
@@ -658,12 +581,6 @@
       }
 
       function renderDailyChart(charts) {
-<<<<<<< ours
-        var points = charts.dailyDeliveries || [];
-        var canvas = document.getElementById("dailyChart");
-        var empty = document.getElementById("dailyChartEmpty");
-        var values = points.map(function (p) {
-=======
         cachedCharts = charts;
         var selection = dailyWeekSelection || "current";
         var buckets = null;
@@ -682,7 +599,6 @@
         var canvas = document.getElementById("dailyChart");
         var empty = document.getElementById("dailyChartEmpty");
         var values = buckets.map(function (p) {
->>>>>>> theirs
           return Math.max(0, Math.round(p.value || 0));
         });
         var hasValue = values.some(function (val) {
@@ -696,23 +612,12 @@
         empty.style.display = "none";
         canvas.style.display = "block";
         if (dailyChart) dailyChart.destroy();
-<<<<<<< ours
-        var observedMax = Math.max.apply(
-          null,
-          values.concat(charts.dailyMax || 0)
-        );
-=======
         var observedMax = Math.max.apply(null, values.concat(maxValue || 0));
->>>>>>> theirs
         var maxY = observedMax ? observedMax * 1.15 : undefined;
         dailyChart = new Chart(canvas.getContext("2d"), {
           type: "bar",
           data: {
-<<<<<<< ours
-            labels: points.map(function (p) {
-=======
             labels: buckets.map(function (p) {
->>>>>>> theirs
               return formatChartLabel(p);
             }),
             datasets: [

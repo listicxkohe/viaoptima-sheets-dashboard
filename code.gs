@@ -1,12 +1,120 @@
 /*********** CONFIG ***********/
 var CONFIG = {
-  SCORE_SHEET: "Weekly-scoreboard",      // weekly scoreboard sheet
+  SCORE_SHEET: "Weekly-scoreboard", // weekly scoreboard sheet
   PASTE_SHEET: "raw_paste",
   IMPORTED_SHEET: "ImportedWeeks",
   MASTER_SHEET: "masterlist",
   CURRENT_ROUTES_SHEET: "Current-Running list",
-  COMPLETE_ROUTES_SHEET: "Complete route list"
+  COMPLETE_ROUTES_SHEET: "Complete route list",
 };
+
+// Script Properties keys
+var SHEET_CONFIG_KEY = "sheetConfig_v1";
+var SHEET_DEFAULTS = {
+  scoreSheet: { sheetName: CONFIG.SCORE_SHEET },
+  pasteSheet: { sheetName: CONFIG.PASTE_SHEET },
+  importedSheet: { sheetName: CONFIG.IMPORTED_SHEET },
+  masterSheet: { sheetName: CONFIG.MASTER_SHEET },
+  currentSheet: { sheetName: CONFIG.CURRENT_ROUTES_SHEET },
+  completeSheet: { sheetName: CONFIG.COMPLETE_ROUTES_SHEET },
+};
+
+/************************************************
+ * SHEET CONFIG HELPERS
+ ************************************************/
+function parseSpreadsheetId_(input) {
+  if (!input) return "";
+  var trimmed = String(input).trim();
+  var match = trimmed.match(/\/d\/([a-zA-Z0-9-_]+)/);
+  if (match && match[1]) return match[1];
+  if (/^[a-zA-Z0-9-_]{20,}$/.test(trimmed)) return trimmed;
+  return "";
+}
+
+function loadSheetConfig_() {
+  var raw = PropertiesService.getScriptProperties().getProperty(SHEET_CONFIG_KEY);
+  if (!raw) return {};
+  try {
+    var parsed = JSON.parse(raw);
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch (err) {
+    return {};
+  }
+}
+
+function getSheetConfig() {
+  var cfg = loadSheetConfig_();
+  var result = {};
+  Object.keys(SHEET_DEFAULTS).forEach(function (key) {
+    var entry = cfg[key] || {};
+    result[key + "Id"] = entry.spreadsheetId || "";
+    result[key + "Name"] = entry.sheetName || "";
+  });
+  return result;
+}
+
+function saveSheetConfig(input) {
+  input = input || {};
+  var saved = {};
+  Object.keys(SHEET_DEFAULTS).forEach(function (key) {
+    var idField = key + "Id";
+    var nameField = key + "Name";
+    var rawId = input[idField] || "";
+    var parsedId = parseSpreadsheetId_(rawId);
+    var sheetName = String(input[nameField] || "").trim();
+    var entry = {};
+    if (parsedId) entry.spreadsheetId = parsedId;
+    if (sheetName) entry.sheetName = sheetName;
+    if (Object.keys(entry).length) {
+      saved[key] = entry;
+    }
+  });
+  PropertiesService.getScriptProperties().setProperty(
+    SHEET_CONFIG_KEY,
+    JSON.stringify(saved)
+  );
+  return true;
+}
+
+function resolveSheetMeta_(key, options) {
+  options = options || {};
+  var defaults = SHEET_DEFAULTS[key];
+  if (!defaults) throw new Error("Unknown sheet key: " + key);
+  var cfg = loadSheetConfig_();
+  var entry = cfg[key] || {};
+  var hasCustom = entry.sheetName || entry.spreadsheetId;
+
+  if (options.requireConfig && !hasCustom) {
+    return null;
+  }
+
+  var sheetName = hasCustom ? entry.sheetName : defaults.sheetName;
+  var ss = hasCustom && entry.spreadsheetId
+    ? SpreadsheetApp.openById(entry.spreadsheetId)
+    : SpreadsheetApp.getActive();
+
+  if (!sheetName) {
+    if (options.optional) return null;
+    throw new Error("Sheet name missing for key: " + key);
+  }
+
+  var sheet = ss.getSheetByName(sheetName);
+  if (!sheet) {
+    if (options.allowCreate && !hasCustom) {
+      sheet = ss.insertSheet(sheetName);
+    } else if (options.optional) {
+      return null;
+    } else {
+      throw new Error("Sheet not found: " + sheetName + " (" + key + ")");
+    }
+  }
+  return { sheet: sheet, ss: ss };
+}
+
+function getSheetByKey_(key, options) {
+  var meta = resolveSheetMeta_(key, options);
+  return meta ? meta.sheet : null;
+}
 
 /************************************************
  * WEEKLY – PUBLIC ENTRY (CALLED FROM SIDEBAR)
@@ -26,25 +134,20 @@ function importFromPaste(rawText) {
  * WEEKLY – CORE LOGIC (READS FROM raw_paste)
  ************************************************/
 function importWeeklyFromPasteSheet_() {
-  var ss = SpreadsheetApp.getActive();
-  var scoreSheet = ss.getSheetByName(CONFIG.SCORE_SHEET);
-  var pasteSheet = ss.getSheetByName(CONFIG.PASTE_SHEET);
-  var weekSheet = ss.getSheetByName(CONFIG.IMPORTED_SHEET);
-  var masterSheet = ss.getSheetByName(CONFIG.MASTER_SHEET);
-
-  if (!scoreSheet || !pasteSheet || !weekSheet || !masterSheet) {
-    throw new Error("One of the sheets is missing: Weekly-scoreboard / raw_paste / ImportedWeeks / masterlist");
-  }
+  var scoreSheet = getSheetByKey_("scoreSheet");
+  var pasteSheet = getSheetByKey_("pasteSheet");
+  var weekSheet = getSheetByKey_("importedSheet");
+  var masterSheet = getSheetByKey_("masterSheet");
 
   var lastPasteRow = pasteSheet.getLastRow();
   if (lastPasteRow === 0) {
-    ss.toast("No data found in 'raw_paste' sheet.", "Import", 5);
+    SpreadsheetApp.getActive().toast("No data found in 'raw_paste' sheet.", "Import", 5);
     return;
   }
   var raw = pasteSheet.getRange(1, 1, lastPasteRow, 1).getValues();
   var lines = raw.map(function (r) { return String(r[0] || "").trim(); });
   if (!lines.length || (lines.length === 1 && lines[0] === "")) {
-    ss.toast("No data found in 'raw_paste' sheet.", "Import", 5);
+    SpreadsheetApp.getActive().toast("No data found in 'raw_paste' sheet.", "Import", 5);
     return;
   }
 
@@ -70,7 +173,7 @@ function importWeeklyFromPasteSheet_() {
   // -------- Check duplicate week --------
   var importedWeeks = getImportedWeeks_(weekSheet);
   if (importedWeeks.indexOf(week) !== -1) {
-    ss.toast("Week " + week + " already imported.", "Import", 5);
+    SpreadsheetApp.getActive().toast("Week " + week + " already imported.", "Import", 5);
     pasteSheet.clear();
     return;
   }
@@ -92,7 +195,7 @@ function importWeeklyFromPasteSheet_() {
   }
 
   // -------- Parse transporter rows --------
-  var tz = ss.getSpreadsheetTimeZone() || "Etc/UTC";
+  var tz = scoreSheet.getParent().getSpreadsheetTimeZone() || "Etc/UTC";
   var weDate = Utilities.formatDate(getWeekEndDate_(week, year), tz, "dd/MM/yyyy");
 
   var rows = [];
@@ -137,18 +240,39 @@ function importWeeklyFromPasteSheet_() {
   }
 
   if (!rows.length) {
-    ss.toast("No transporter rows parsed.", "Import", 5);
+    SpreadsheetApp.getActive().toast("No transporter rows parsed.", "Import", 5);
     return;
   }
 
-  var startRow = scoreSheet.getLastRow() + 1;
-  scoreSheet.getRange(startRow, 1, rows.length, rows[0].length).setValues(rows);
+  // Merge with existing rows, sort latest first, and rewrite the sheet.
+  var existing = [];
+  var lastDataRow = scoreSheet.getLastRow();
+  if (lastDataRow > 1) {
+    existing = scoreSheet.getRange(2, 1, lastDataRow - 1, rows[0].length).getValues();
+    scoreSheet.getRange(2, 1, lastDataRow - 1, rows[0].length).clearContent();
+  }
+  var merged = existing.concat(rows);
+  merged.sort(function (a, b) {
+    var da = parseWeDate_(a[1]);
+    var db = parseWeDate_(b[1]);
+    if (db.getTime() !== da.getTime()) {
+      return db.getTime() - da.getTime();
+    }
+    return (Number(b[0]) || 0) - (Number(a[0]) || 0);
+  });
+  scoreSheet.getRange(2, 1, merged.length, rows[0].length).setValues(merged);
 
-  weekSheet.getRange(weekSheet.getLastRow() + 1, 1).setValue(week);
+  // Track imported weeks and keep list sorted descending
+  var weeksMerged = importedWeeks.concat([week]).sort(function (a, b) { return Number(b) - Number(a); });
+  var weekLast = weekSheet.getLastRow();
+  if (weekLast > 1) {
+    weekSheet.getRange(2, 1, weekLast - 1, 1).clearContent();
+  }
+  weekSheet.getRange(2, 1, weeksMerged.length, 1).setValues(weeksMerged.map(function (w) { return [w]; }));
 
   pasteSheet.clear();
 
-  ss.toast("Imported " + rows.length + " rows for week " + week, "Import Successful", 8);
+  SpreadsheetApp.getActive().toast("Imported " + rows.length + " rows for week " + week, "Import Successful", 8);
 }
 
 /************************************************
@@ -183,6 +307,19 @@ function getImportedWeeks_(sheet) {
     .map(function (v) { return Number(v); });
 }
 
+function parseWeDate_(value) {
+  if (Object.prototype.toString.call(value) === "[object Date]") {
+    return value;
+  }
+  var str = String(value || "").trim();
+  var parts = str.split("/");
+  if (parts.length === 3) {
+    var d = new Date(Number(parts[2]), Number(parts[1]) - 1, Number(parts[0]));
+    if (!isNaN(d.getTime())) return d;
+  }
+  return new Date(0);
+}
+
 /** Week start = Saturday, week ends Friday */
 function getWeekEndDate_(week, year) {
   var firstJan = new Date(year, 0, 1);
@@ -202,15 +339,14 @@ function getWeekEndDate_(week, year) {
  * DAILY ROUTES – SHARED PARSER (READS raw_paste)
  ************************************************/
 function parseRoutesFromPaste_() {
-  var ss = SpreadsheetApp.getActive();
-  var pasteSheet = ss.getSheetByName(CONFIG.PASTE_SHEET);
-  if (!pasteSheet) throw new Error(CONFIG.PASTE_SHEET + " sheet not found.");
+  var pasteSheet = getSheetByKey_("pasteSheet");
+  var parentSs = pasteSheet.getParent();
+  var tz = parentSs.getSpreadsheetTimeZone() || "Etc/UTC";
 
   var range = pasteSheet.getDataRange();
   var data = range.getValues();
-  if (!data.length) throw new Error("No data in " + CONFIG.PASTE_SHEET + " sheet.");
+  if (!data.length) throw new Error("No data in " + pasteSheet.getName() + " sheet.");
 
-  var tz = ss.getSpreadsheetTimeZone() || "Etc/UTC";
   var today = new Date();
   var todayKey = Utilities.formatDate(today, tz, "yyyy-MM-dd");
 
@@ -308,12 +444,8 @@ function importDailyFromRaw(rawText, isStartOfDay) {
  * DAILY ROUTES – START OF DAY
  ************************************************/
 function importDailyStartFromPaste() {
-  var ss = SpreadsheetApp.getActive();
-  var currentSheet = ss.getSheetByName(CONFIG.CURRENT_ROUTES_SHEET);
-  var completeSheet = ss.getSheetByName(CONFIG.COMPLETE_ROUTES_SHEET);
-  if (!currentSheet || !completeSheet) {
-    throw new Error("Current-Running list or Complete route list sheet missing.");
-  }
+  var currentSheet = getSheetByKey_("currentSheet");
+  var completeSheet = getSheetByKey_("completeSheet");
 
   var routes = parseRoutesFromPaste_();
 
@@ -351,27 +483,23 @@ function importDailyStartFromPaste() {
 
   sortCompleteByDateDesc_(completeSheet);
 
-  ss.getSheetByName(CONFIG.PASTE_SHEET).clear();
+  getSheetByKey_("pasteSheet").clear();
 
-  ss.toast("Daily START imported: " + routes.length + " routes.", "Daily Routes", 8);
+  SpreadsheetApp.getActive().toast("Daily START imported: " + routes.length + " routes.", "Daily Routes", 8);
 }
 
 /************************************************
  * DAILY ROUTES – END OF DAY
  ************************************************/
 function importDailyEndFromPaste() {
-  var ss = SpreadsheetApp.getActive();
-  var completeSheet = ss.getSheetByName(CONFIG.COMPLETE_ROUTES_SHEET);
-  var currentSheet = ss.getSheetByName(CONFIG.CURRENT_ROUTES_SHEET);
-  if (!completeSheet || !currentSheet) {
-    throw new Error("Complete route list or Current-Running list sheet missing.");
-  }
+  var completeSheet = getSheetByKey_("completeSheet");
+  var currentSheet = getSheetByKey_("currentSheet");
 
   var routes = parseRoutesFromPaste_();
 
   var currentMap = buildCurrentRouteMap_(currentSheet);
 
-  applyRescueLogic_(routes, currentMap);
+  applyRescueLogicNormalized_(routes, currentMap);
 
   ensureRouteHeaders_(completeSheet);
   formatRouteDateColumn_(completeSheet);
@@ -380,9 +508,9 @@ function importDailyEndFromPaste() {
 
   sortCompleteByDateDesc_(completeSheet);
 
-  ss.getSheetByName(CONFIG.PASTE_SHEET).clear();
+  getSheetByKey_("pasteSheet").clear();
 
-  ss.toast("Daily END imported (updated with rescues): " + routes.length + " routes.", "Daily Routes", 8);
+  SpreadsheetApp.getActive().toast("Daily END imported (updated with rescues): " + routes.length + " routes.", "Daily Routes", 8);
 }
 
 /************************************************
@@ -429,8 +557,8 @@ function sortCompleteByDateDesc_(sheet) {
 }
 
 function buildCurrentRouteMap_(sheet) {
-  var ss = SpreadsheetApp.getActive();
-  var tz = ss.getSpreadsheetTimeZone() || "Etc/UTC";
+  var parent = sheet.getParent();
+  var tz = parent.getSpreadsheetTimeZone() || "Etc/UTC";
 
   var last = sheet.getLastRow();
   var map = {};
@@ -512,6 +640,53 @@ function applyRescueLogic_(routes, currentMap) {
   }
 }
 
+// Enhanced rescue logic: supports multiple delimiters and matches original assignee.
+function applyRescueLogicNormalized_(routes, currentMap) {
+  for (var i = 0; i < routes.length; i++) {
+    var r = routes[i];
+    var cur = currentMap[r.key];
+
+    var ids = splitMulti_(r.transporterId);
+    var names = splitMulti_(r.driverName);
+    var multi = ids.length > 1 || names.length > 1;
+
+    if (!multi) {
+      r.rescuedBy = "";
+      continue;
+    }
+
+    var origId = cur ? String(cur.transporterId || "").trim() : "";
+    var origName = cur ? String(cur.driverName || "").trim() : "";
+
+    var idx = -1;
+    if (origId) idx = ids.indexOf(origId);
+    if (idx === -1 && origName) {
+      var lowerNames = names.map(function (n) { return n.toLowerCase(); });
+      idx = lowerNames.indexOf(origName.toLowerCase());
+    }
+    if (idx === -1) idx = 0;
+
+    var rescuedTokens = [];
+    for (var j = 0; j < Math.max(ids.length, names.length); j++) {
+      if (j === idx) continue;
+      var token = names[j] || ids[j] || "";
+      if (token) rescuedTokens.push(token);
+    }
+
+    r.transporterId = ids[idx] || r.transporterId;
+    r.driverName = names[idx] || r.driverName;
+    r.rescuedBy = rescuedTokens.join(", ");
+  }
+}
+
+function splitMulti_(raw) {
+  if (!raw) return [];
+  return String(raw)
+    .split(/[|,;\/]+/g)
+    .map(function (s) { return s.trim(); })
+    .filter(function (s) { return s; });
+}
+
 function upsertRoutesIntoComplete_(sheet, routes) {
   var ss = SpreadsheetApp.getActive();
   var tz = ss.getSpreadsheetTimeZone() || "Etc/UTC";
@@ -589,14 +764,14 @@ function upsertRoutesIntoComplete_(sheet, routes) {
  ************************************************/
 function onOpen() {
   SpreadsheetApp.getUi()
-    .createMenu("DNS6 Import")
+    .createMenu("ViaOptima Dashboard")
     .addItem("Open Import Panel", "showImportPanel")
     .addToUi();
 }
 
 function showImportPanel() {
   var html = HtmlService.createHtmlOutputFromFile("ImportPanel")
-    .setTitle("DNS6 Import");
+    .setTitle("ViaOptima Control Panel");
   SpreadsheetApp.getUi().showSidebar(html);
 }
 
@@ -605,11 +780,7 @@ function showImportPanel() {
  * and write it into the 'raw_paste' sheet starting at A1.
  */
 function writeRawToPasteSheet_(text) {
-  var ss = SpreadsheetApp.getActive();
-  var sheet = ss.getSheetByName(CONFIG.PASTE_SHEET);
-  if (!sheet) {
-    sheet = ss.insertSheet(CONFIG.PASTE_SHEET);
-  }
+  var sheet = getSheetByKey_("pasteSheet", { allowCreate: true });
 
   sheet.clear();
 

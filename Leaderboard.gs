@@ -6,15 +6,11 @@
  *   - CONFIG.COMPLETE_ROUTES_SHEET (optional) or "Complete route list"
  ************************************************/
 
-// Fallbacks in case CONFIG isn't defined
-var LB_CONFIG = {
-  SCORE_SHEET:
-    (typeof CONFIG !== "undefined" && CONFIG.SCORE_SHEET) || "Da_Scoreboard",
-  MASTER_SHEET:
-    (typeof CONFIG !== "undefined" && CONFIG.MASTER_SHEET) || "masterlist",
-  COMPLETE_ROUTES_SHEET:
-    (typeof CONFIG !== "undefined" && CONFIG.COMPLETE_ROUTES_SHEET) ||
-    "Complete route list",
+// Logical keys for sheet config (must be explicitly set in the sidebar).
+var LB_KEYS = {
+  SCORE_SHEET: "scoreSheet",
+  MASTER_SHEET: "masterSheet",
+  COMPLETE_ROUTES_SHEET: "completeSheet",
 };
 
 // ScriptProperties key
@@ -86,15 +82,22 @@ function saveLeaderboardConfig(cfg) {
  * Called by leaderboard_page.html via google.script.run.
  */
 function getLeaderboardData() {
-  var ss = SpreadsheetApp.getActive();
-  var scoreSheet = ss.getSheetByName(LB_CONFIG.SCORE_SHEET);
-  var masterSheet = ss.getSheetByName(LB_CONFIG.MASTER_SHEET);
-  var completeSheet = ss.getSheetByName(LB_CONFIG.COMPLETE_ROUTES_SHEET);
+  var scoreSheet = resolveLbSheet_(LB_KEYS.SCORE_SHEET);
+  var masterSheet = resolveLbSheet_(LB_KEYS.MASTER_SHEET);
+  var completeSheet = resolveLbSheet_(LB_KEYS.COMPLETE_ROUTES_SHEET, { optional: true });
 
-  if (!scoreSheet)
-    throw new Error("Scoreboard sheet not found: " + LB_CONFIG.SCORE_SHEET);
-  if (!masterSheet)
-    throw new Error("Masterlist sheet not found: " + LB_CONFIG.MASTER_SHEET);
+  if (!scoreSheet || !masterSheet) {
+    return {
+      summary: {
+        totalDrivers: 0,
+        activeDrivers: 0,
+        totalDeliveries: 0,
+        avgDcr: null,
+        avgPod: null,
+      },
+      rows: [],
+    };
+  }
 
   var cfg = getLeaderboardConfig_();
 
@@ -503,4 +506,30 @@ function computeScore_(stats, cfg) {
 
   var score = quality + volume + experience + rescG - rescT;
   return Math.round(score * 10) / 10; // one decimal place
+}
+
+/**
+ * Resolve a sheet for leaderboard usage based on sheet config.
+ * Requires a sheet name; if not configured, returns null instead of falling back.
+ */
+function resolveLbSheet_(key, opts) {
+  opts = opts || {};
+  var cfg = loadSheetConfig_ ? loadSheetConfig_() : {};
+  var entry = cfg && cfg[key] ? cfg[key] : null;
+  if (!entry || (!entry.sheetName && !entry.spreadsheetId)) {
+    if (opts.optional) return null;
+    return null;
+  }
+  var ss = entry.spreadsheetId ? SpreadsheetApp.openById(entry.spreadsheetId) : SpreadsheetApp.getActive();
+  var sheetName = entry.sheetName || "";
+  if (!sheetName) {
+    if (opts.optional) return null;
+    return null;
+  }
+  var sheet = ss.getSheetByName(sheetName);
+  if (!sheet) {
+    if (opts.optional) return null;
+    throw new Error("Sheet not found for leaderboard: " + sheetName);
+  }
+  return sheet;
 }
