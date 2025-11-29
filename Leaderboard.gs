@@ -81,10 +81,26 @@ function saveLeaderboardConfig(cfg) {
  * Build the leaderboard data model.
  * Called by leaderboard_page.html via google.script.run.
  */
-function getLeaderboardData() {
+function getLeaderboardData(selectedWeek) {
   var scoreSheet = resolveLbSheet_(LB_KEYS.SCORE_SHEET);
   var masterSheet = resolveLbSheet_(LB_KEYS.MASTER_SHEET);
   var completeSheet = resolveLbSheet_(LB_KEYS.COMPLETE_ROUTES_SHEET, { optional: true });
+
+  var availableWeeks = [];
+  if (scoreSheet) {
+    var wkLast = scoreSheet.getLastRow();
+    if (wkLast > 1) {
+      var weekVals = scoreSheet.getRange(2, 1, wkLast - 1, 1).getValues();
+      var wkSet = {};
+      for (var w = 0; w < weekVals.length; w++) {
+        var wkNum = Number(weekVals[w][0]);
+        if (!isNaN(wkNum)) wkSet[wkNum] = true;
+      }
+      availableWeeks = Object.keys(wkSet)
+        .map(function (k) { return Number(k); })
+        .sort(function (a, b) { return b - a; });
+    }
+  }
 
   if (!scoreSheet || !masterSheet) {
     return {
@@ -96,6 +112,27 @@ function getLeaderboardData() {
         avgPod: null,
       },
       rows: [],
+      availableWeeks: availableWeeks,
+    };
+  }
+
+  var selectedWeekNum = selectedWeek != null && selectedWeek !== ""
+    ? Number(selectedWeek)
+    : null;
+  if (selectedWeekNum != null && isNaN(selectedWeekNum)) {
+    selectedWeekNum = null;
+  }
+  if (selectedWeekNum != null && availableWeeks.indexOf(selectedWeekNum) === -1) {
+    return {
+      summary: {
+        totalDrivers: 0,
+        activeDrivers: 0,
+        totalDeliveries: 0,
+        avgDcr: null,
+        avgPod: null,
+      },
+      rows: [],
+      availableWeeks: availableWeeks,
     };
   }
 
@@ -143,6 +180,12 @@ function getLeaderboardData() {
   var sLast = scoreSheet.getLastRow();
   var scoreVals =
     sLast > 1 ? scoreSheet.getRange(2, 1, sLast - 1, 11).getValues() : [];
+
+  if (selectedWeekNum != null) {
+    scoreVals = scoreVals.filter(function (row) {
+      return Number(row[0]) === selectedWeekNum;
+    });
+  }
 
   // Da_Scoreboard layout:
   // A: WK
@@ -378,6 +421,7 @@ function getLeaderboardData() {
       avgPod: avgPodAll != null ? roundPct_(avgPodAll) : null,
     },
     rows: rows,
+    availableWeeks: availableWeeks,
   };
 
   return result;
