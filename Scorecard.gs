@@ -2,26 +2,29 @@
  * DRIVER SCORECARD - SERVER SIDE
  ************************************************/
 
-function openDriverScorecardDialog(transporterId, driverName) {
+function openDriverScorecardDialog(transporterId, driverName, weekFilter) {
   var id = sanitizeTransporterId_(transporterId);
   if (!id) {
     throw new Error("Transporter ID is required for the scorecard.");
   }
+  var week = normalizeWeekFilter_(weekFilter);
 
   var template = HtmlService.createTemplateFromFile("scorecard_page");
   template.transporterId = id;
   template.driverName = driverName || "";
+  template.initialWeek = week;
 
   var html = template.evaluate().setWidth(1100).setHeight(780);
   SpreadsheetApp.getUi().showModalDialog(html, "Driver scorecard");
   return true;
 }
 
-function getDriverScorecardData(transporterId) {
+function getDriverScorecardData(transporterId, weekFilter) {
   var id = sanitizeTransporterId_(transporterId);
   if (!id) {
     throw new Error("Transporter ID is required.");
   }
+  var appliedWeek = normalizeWeekFilter_(weekFilter);
 
   var scoreSheet = getSheetByKey_("scoreSheet");
   var masterSheet = getSheetByKey_("masterSheet");
@@ -37,15 +40,18 @@ function getDriverScorecardData(transporterId) {
   var tz = scoreSheet.getParent().getSpreadsheetTimeZone() || "Etc/UTC";
 
   var masterInfo = loadScorecardMaster_(masterSheet, id);
-  var weeklyInfo = collectWeeklyScorecardStats_(scoreSheet, id, tz);
+  var weeklyInfo = collectWeeklyScorecardStats_(scoreSheet, id, tz, {
+    weekFilter: appliedWeek,
+  });
   var routeInfo = collectRouteScorecardStats_(
     completeSheet,
     id,
     buildDriverNameCandidates_(masterInfo, weeklyInfo),
     masterInfo.nameToIds,
-    tz
+    tz,
+    weeklyInfo.weekWindow
   );
-  var leaderboardInfo = getLeaderboardContextForScorecard_(id);
+  var leaderboardInfo = getLeaderboardContextForScorecard_(id, appliedWeek);
   var metricRanks = computeMetricRanks_(leaderboardInfo.rows, id);
   var comparisons = buildComparisonStats_(
     leaderboardInfo,
@@ -97,6 +103,7 @@ function getDriverScorecardData(transporterId) {
     charts: {
       dailyDeliveries: routeInfo.dailyBuckets,
       dailyMax: routeInfo.dailyMax,
+      dailyOverall: routeInfo.overallDaily,
       rescuesTrend: routeInfo.weeklyTrend,
       weeklyScores: weeklyInfo.scoreTimeline,
     },
@@ -114,12 +121,14 @@ function getDriverScorecardData(transporterId) {
     },
     routes: {
       top: routeInfo.topRoutes,
-    },
-    spotlight: spotlight,
-    history: {
-      weekly: weeklyInfo.weeklyRows,
-    },
-  };
+  },
+  spotlight: spotlight,
+  history: {
+    weekly: weeklyInfo.historyRows,
+  },
+  weekOptions: weeklyInfo.weekOptions,
+  appliedWeek: weeklyInfo.appliedWeek,
+};
 
   return payload;
 }
@@ -158,23 +167,18 @@ function loadScorecardMaster_(sheet, transporterId) {
   return { driver: driver, nameToIds: nameToIds };
 }
 
-function collectWeeklyScorecardStats_(sheet, transporterId, tz) {
+function collectWeeklyScorecardStats_(sheet, transporterId, tz, opts) {
+  opts = opts || {};
+  var filterWeek =
+    typeof opts.weekFilter === "number" && !isNaN(opts.weekFilter)
+      ? opts.weekFilter
+      : null;
+
   var last = sheet.getLastRow();
   var values = last > 1 ? sheet.getRange(2, 1, last - 1, 11).getValues() : [];
-  var records = [];
-  var weeksSet = {};
-  var totalDeliveries = 0;
-  var dcrSum = 0;
-  var dcrCount = 0;
-  var podSum = 0;
-  var podCount = 0;
-  var ccSum = 0;
-  var ccCount = 0;
-  var lastWeDate = null;
-  var lastWeekNumber = null;
-  var lastDriverName = "";
-  var lastStatus = "";
+  var allRecords = [];
   var nameVariants = {};
+  var weekMetaMap = {};
 
   for (var i = 0; i < values.length; i++) {
     var row = values[i];
@@ -192,43 +196,23 @@ function collectWeeklyScorecardStats_(sheet, transporterId, tz) {
     var driverName = String(row[2] || "").trim();
     var status = String(row[3] || "").trim();
 
-    totalDeliveries += delivered;
-    if (!isNaN(weekNumber)) {
-      weeksSet[String(weekNumber)] = true;
+    if (!isNaN(weekNumber) && !weekMetaMap[weekNumber]) {
+      weekMetaMap[weekNumber] = {
+        week: weekNumber,
+        weDate: weDate ? new Date(weDate.getTime()) : null,
+      };
     }
-
-    if (dcr != null) {
-      dcrSum += dcr;
-      dcrCount++;
-    }
-    if (pod != null) {
-      podSum += pod;
-      podCount++;
-    }
-    if (cc != null) {
-      ccSum += cc;
-      ccCount++;
-    }
-
-    var entry = {
+    allRecords.push({
       week: !isNaN(weekNumber) ? weekNumber : null,
       weDateObj: weDate ? new Date(weDate.getTime()) : null,
-      dateKey: weDate
-        ? Utilities.formatDate(weDate, tz, "yyyy-MM-dd")
-        : "",
+      dateKey: weDate ? Utilities.formatDate(weDate, tz, "yyyy-MM-dd") : "",
       delivered: delivered,
       dcrValue: dcr,
       podValue: pod,
       ccValue: cc,
-    };
-    records.push(entry);
-
-    if (!lastWeDate || (weDate && weDate.getTime() > lastWeDate.getTime())) {
-      lastWeDate = weDate ? new Date(weDate.getTime()) : null;
-      lastWeekNumber = !isNaN(weekNumber) ? weekNumber : null;
-      if (driverName) lastDriverName = driverName;
-      if (status) lastStatus = status;
-    }
+      driverName: driverName,
+      status: status,
+    });
 
     if (driverName) {
       var key = driverName.toLowerCase();
@@ -238,55 +222,92 @@ function collectWeeklyScorecardStats_(sheet, transporterId, tz) {
     }
   }
 
-  records.sort(function (a, b) {
+  allRecords.sort(function (a, b) {
     var at = a.weDateObj ? a.weDateObj.getTime() : 0;
     var bt = b.weDateObj ? b.weDateObj.getTime() : 0;
     return at - bt;
   });
 
-  var weeklyRows = [];
-  var prevRecord = null;
-  for (var j = 0; j < records.length; j++) {
-    var current = records[j];
-    var displayDate = current.weDateObj
-      ? Utilities.formatDate(current.weDateObj, tz, "d MMM yyyy")
-      : "";
-    var dcrDisplay = current.dcrValue != null ? roundPct_(current.dcrValue) : null;
-    var podDisplay = current.podValue != null ? roundPct_(current.podValue) : null;
-    var ccDisplay = current.ccValue != null ? roundPct_(current.ccValue) : null;
-    var entryRow = {
-      week: current.week,
-      weDate: displayDate,
-      dateKey: current.dateKey,
-      delivered: current.delivered,
-      dcr: dcrDisplay,
-      pod: podDisplay,
-      cc: ccDisplay,
-      deliveredChange: prevRecord ? current.delivered - prevRecord.delivered : null,
-      deliveredChangePct:
-        prevRecord && prevRecord.delivered
-          ? ((current.delivered - prevRecord.delivered) / prevRecord.delivered) * 100
-          : null,
-      dcrChange: prevRecord && dcrDisplay != null && prevRecord.dcr != null
-        ? roundToOne_(dcrDisplay - prevRecord.dcr)
-        : null,
-      podChange: prevRecord && podDisplay != null && prevRecord.pod != null
-        ? roundToOne_(podDisplay - prevRecord.pod)
-        : null,
-      ccChange: prevRecord && ccDisplay != null && prevRecord.cc != null
-        ? roundToOne_(ccDisplay - prevRecord.cc)
-        : null,
-    };
-    weeklyRows.push(entryRow);
-    prevRecord = {
-      delivered: current.delivered,
-      dcr: dcrDisplay,
-      pod: podDisplay,
-      cc: ccDisplay,
-    };
+  var filteredRecords =
+    filterWeek != null
+      ? allRecords.filter(function (r) {
+          return r.week === filterWeek;
+        })
+      : allRecords.slice();
+
+  var historyRecords =
+    filterWeek != null
+      ? allRecords.filter(function (r) {
+          return r.week != null && r.week <= filterWeek;
+        })
+      : allRecords.slice();
+
+  function buildWeeklyRowsFromRecords(records, prevLookupFn) {
+    var rows = [];
+    var prevRecord = null;
+    for (var j = 0; j < records.length; j++) {
+      var current = records[j];
+      if (prevLookupFn) {
+        prevRecord = prevLookupFn(current) || prevRecord;
+      }
+      var displayDate = current.weDateObj
+        ? Utilities.formatDate(current.weDateObj, tz, "d MMM yyyy")
+        : "";
+      var dcrDisplay =
+        current.dcrValue != null ? roundPct_(current.dcrValue) : null;
+      var podDisplay =
+        current.podValue != null ? roundPct_(current.podValue) : null;
+      var ccDisplay =
+        current.ccValue != null ? roundPct_(current.ccValue) : null;
+      rows.push({
+        week: current.week,
+        weDate: displayDate,
+        dateKey: current.dateKey,
+        delivered: current.delivered,
+        dcr: dcrDisplay,
+        pod: podDisplay,
+        cc: ccDisplay,
+        deliveredChange: prevRecord ? current.delivered - prevRecord.delivered : null,
+        deliveredChangePct:
+          prevRecord && prevRecord.delivered
+            ? ((current.delivered - prevRecord.delivered) / prevRecord.delivered) * 100
+            : null,
+        dcrChange:
+          prevRecord && dcrDisplay != null && prevRecord.dcr != null
+            ? roundToOne_(dcrDisplay - prevRecord.dcr)
+            : null,
+        podChange:
+          prevRecord && podDisplay != null && prevRecord.pod != null
+            ? roundToOne_(podDisplay - prevRecord.pod)
+            : null,
+        ccChange:
+          prevRecord && ccDisplay != null && prevRecord.cc != null
+            ? roundToOne_(ccDisplay - prevRecord.cc)
+            : null,
+      });
+      prevRecord = {
+        delivered: current.delivered,
+        dcr: dcrDisplay,
+        pod: podDisplay,
+        cc: ccDisplay,
+      };
+    }
+    return rows;
   }
 
-  var scoreTimeline = buildWeeklyScoreSeries_(records, tz);
+  function findPrevFromHistory(record) {
+    var idx = historyRecords.indexOf(record);
+    if (idx > 0) return historyRecords[idx - 1];
+    return null;
+  }
+
+  var weeklyRows = buildWeeklyRowsFromRecords(
+    filteredRecords,
+    findPrevFromHistory
+  );
+  var historyRows = buildWeeklyRowsFromRecords(historyRecords);
+
+  var scoreTimeline = buildWeeklyScoreSeries_(allRecords, tz);
   if (scoreTimeline.length) {
     var timelineMap = {};
     for (var s = 0; s < scoreTimeline.length; s++) {
@@ -307,6 +328,43 @@ function collectWeeklyScorecardStats_(sheet, transporterId, tz) {
     }
   }
 
+  var weeksSet = {};
+  var totalDeliveries = 0;
+  var dcrSum = 0;
+  var dcrCount = 0;
+  var podSum = 0;
+  var podCount = 0;
+  var ccSum = 0;
+  var ccCount = 0;
+  var lastWeDate = null;
+  var lastWeekNumber = null;
+  var lastDriverName = "";
+  var lastStatus = "";
+
+  for (var r = 0; r < filteredRecords.length; r++) {
+    var rec = filteredRecords[r];
+    totalDeliveries += rec.delivered || 0;
+    if (!isNaN(rec.week)) weeksSet[String(rec.week)] = true;
+    if (rec.dcrValue != null) {
+      dcrSum += rec.dcrValue;
+      dcrCount++;
+    }
+    if (rec.podValue != null) {
+      podSum += rec.podValue;
+      podCount++;
+    }
+    if (rec.ccValue != null) {
+      ccSum += rec.ccValue;
+      ccCount++;
+    }
+    if (!lastWeDate || (rec.weDateObj && rec.weDateObj.getTime() > lastWeDate.getTime())) {
+      lastWeDate = rec.weDateObj ? new Date(rec.weDateObj.getTime()) : null;
+      lastWeekNumber = !isNaN(rec.week) ? rec.week : null;
+      if (rec.driverName) lastDriverName = rec.driverName;
+      if (rec.status) lastStatus = rec.status;
+    }
+  }
+
   var avgDcr = dcrCount ? roundPct_(dcrSum / dcrCount) : null;
   var avgPod = podCount ? roundPct_(podSum / podCount) : null;
   var avgCc = ccCount ? roundPct_(ccSum / ccCount) : null;
@@ -316,13 +374,52 @@ function collectWeeklyScorecardStats_(sheet, transporterId, tz) {
   if (lastWeDate) {
     var label = Utilities.formatDate(lastWeDate, tz, "d MMM yyyy");
     if (lastWeekNumber != null) {
-      summaryNote = "Latest week " + lastWeekNumber + " (" + label + ")";
+      summaryNote =
+        filterWeek != null
+          ? "Viewing week " + lastWeekNumber + " (" + label + ")"
+          : "Latest week " + lastWeekNumber + " (" + label + ")";
     } else {
-      summaryNote = "Latest week ending " + label;
+      summaryNote =
+        filterWeek != null
+          ? "Viewing week ending " + label
+          : "Latest week ending " + label;
     }
   } else {
     summaryNote =
-      "No weekly scorecard rows have been imported for this driver yet.";
+      filterWeek != null
+        ? "No weekly scorecard rows found for week " + filterWeek + "."
+        : "No weekly scorecard rows have been imported for this driver yet.";
+  }
+
+  var weekOptions = Object.keys(weekMetaMap)
+    .map(function (wk) {
+      var meta = weekMetaMap[wk];
+      var labelDate =
+        meta.weDate && !isNaN(meta.weDate.getTime())
+          ? Utilities.formatDate(meta.weDate, tz, "d MMM yyyy")
+          : "";
+      return {
+        value: meta.week,
+        label: labelDate
+          ? "Week " + meta.week + " (" + labelDate + ")"
+          : "Week " + meta.week,
+        sortDate: meta.weDate ? meta.weDate.getTime() : 0,
+      };
+    })
+    .sort(function (a, b) {
+      if (a.sortDate !== b.sortDate) return b.sortDate - a.sortDate;
+      return b.value - a.value;
+    })
+    .map(function (item) {
+      return { value: item.value, label: item.label };
+    });
+
+  var weekWindow = null;
+  if (filterWeek != null && lastWeDate) {
+    var end = new Date(lastWeDate.getTime());
+    var start = new Date(lastWeDate.getTime());
+    start.setDate(start.getDate() - 6);
+    weekWindow = { start: start, end: end, tz: tz };
   }
 
   return {
@@ -339,11 +436,15 @@ function collectWeeklyScorecardStats_(sheet, transporterId, tz) {
     lastDriverName: lastDriverName,
     lastStatus: lastStatus,
     summaryNote: summaryNote,
-    metricTrends: buildMetricTrendSummary_(weeklyRows),
+    metricTrends: buildMetricTrendSummary_(filterWeek != null ? historyRows : weeklyRows),
     scoreTimeline: scoreTimeline,
     nameVariants: Object.keys(nameVariants).map(function (k) {
       return nameVariants[k];
     }),
+    weekOptions: weekOptions,
+    appliedWeek: filterWeek,
+    weekWindow: weekWindow,
+    historyRows: historyRows,
   };
 }
 
@@ -436,7 +537,7 @@ function buildWeeklyScoreSeries_(records, tz) {
   return timeline;
 }
 
-function collectRouteScorecardStats_(sheet, transporterId, driverNameCandidates, nameToIds, tz) {
+function collectRouteScorecardStats_(sheet, transporterId, driverNameCandidates, nameToIds, tz, weekWindow) {
   driverNameCandidates = driverNameCandidates || [];
   var driverNameSet = {};
   for (var n = 0; n < driverNameCandidates.length; n++) {
@@ -449,6 +550,7 @@ function collectRouteScorecardStats_(sheet, transporterId, driverNameCandidates,
   var weeklyMap = {};
   var routeTotals = {};
   var latestDate = null;
+  var dateKeySet = {};
   var summary = {
     totalRoutes: 0,
     onTimeRoutes: 0,
@@ -472,6 +574,11 @@ function collectRouteScorecardStats_(sheet, transporterId, driverNameCandidates,
         var dateIndex = columnMap.date != null ? columnMap.date : 1;
         var date = parseDateCell_(row[dateIndex]);
         if (!date) continue;
+        if (weekWindow) {
+          if (date < weekWindow.start || date > weekWindow.end) {
+            continue;
+          }
+        }
         date.setHours(0, 0, 0, 0);
 
         var transporterCell =
@@ -504,6 +611,7 @@ function collectRouteScorecardStats_(sheet, transporterId, driverNameCandidates,
             : "";
 
         var dateKey = Utilities.formatDate(date, tz, "yyyy-MM-dd");
+        dateKeySet[dateKey] = true;
         if (!latestDate || date.getTime() > latestDate.getTime()) {
           latestDate = new Date(date.getTime());
         }
@@ -562,7 +670,11 @@ function collectRouteScorecardStats_(sheet, transporterId, driverNameCandidates,
   // Anchor weeks to the current calendar week (Sun–Sat) so "current" and "last" are distinct,
   // regardless of the last route date imported.
   // Anchor to the latest route date when available; otherwise use "today".
-  var baseDate = latestDate ? new Date(latestDate.getTime()) : getTodayForTimezone_(tz);
+  var baseDate = latestDate
+    ? new Date(latestDate.getTime())
+    : weekWindow && weekWindow.end
+    ? new Date(weekWindow.end.getTime())
+    : getTodayForTimezone_(tz);
   var currentStart = getSundayStart_(baseDate, tz);
   var lastStart = new Date(currentStart.getTime());
   lastStart.setDate(currentStart.getDate() - 7);
@@ -656,6 +768,25 @@ function collectRouteScorecardStats_(sheet, transporterId, driverNameCandidates,
   return {
     dailyBuckets: bucketsCurrent.buckets,
     dailyMax: bucketsCurrent.max,
+    overallDaily: (function () {
+      var keys = Object.keys(dateKeySet);
+      if (!keys.length) return null;
+      keys.sort(function (a, b) {
+        return parseDateKey_(a).getTime() - parseDateKey_(b).getTime();
+      });
+      var series = keys.map(function (k) {
+        return {
+          key: k,
+          label: Utilities.formatDate(parseDateKey_(k), tz, "d MMM"),
+          value: dailyTotals[keySafe_(k)] || 0,
+        };
+      });
+      var max = 0;
+      series.forEach(function (p) {
+        if (p.value > max) max = p.value;
+      });
+      return { buckets: series, max: max };
+    })(),
     weeklyBuckets: {
       current: bucketsCurrent,
       last: bucketsLast,
@@ -780,9 +911,9 @@ function incrementRescueWeek_(map, date, tz, field) {
   map[key][field]++;
 }
 
-function getLeaderboardContextForScorecard_(transporterId) {
+function getLeaderboardContextForScorecard_(transporterId, weekFilter) {
   try {
-    var data = getLeaderboardData();
+    var data = getLeaderboardData(weekFilter);
     var rows = (data && data.rows) || [];
     var match = null;
     var topScore = null;
@@ -930,7 +1061,7 @@ function buildSpotlightHighlights_(metricRanks, topRoutes, leaderRow) {
     if (info && info.rank && info.rank <= 5) {
       var descriptor = info.rank <= 3 ? "Top " + info.rank : "Top 5";
       highlights.push({
-        title: "?? " + descriptor + " in " + metricNames[key],
+        title: "⭐ " + descriptor + " in " + metricNames[key],
         detail: "Ranked " + info.rank + " of " + (info.total || "-"),
       });
     }
@@ -938,13 +1069,13 @@ function buildSpotlightHighlights_(metricRanks, topRoutes, leaderRow) {
 
   if (leaderRow && leaderRow.rescuesGiven) {
     highlights.push({
-      title: "?? Rescue hero",
+      title: "🟢 Rescue hero",
       detail: (leaderRow.rescuesGiven || 0) + " rescues given",
     });
   }
   if (leaderRow && leaderRow.rescuesTaken) {
     highlights.push({
-      title: "?? Support ready",
+      title: "🟠 Support ready",
       detail: (leaderRow.rescuesTaken || 0) + " rescues received",
     });
   }
@@ -952,13 +1083,13 @@ function buildSpotlightHighlights_(metricRanks, topRoutes, leaderRow) {
   if (topRoutes.length) {
     var topRoute = topRoutes[0];
     highlights.push({
-      title: "??? Route " + (topRoute.route || ""),
+      title: "🛣️ Route " + (topRoute.route || ""),
       detail: (topRoute.deliveries || 0) + " deliveries handled",
     });
   }
   if (!highlights.length) {
     highlights.push({
-      title: "Building history",
+      title: "📈 Building history",
       detail: "Keep logging weeks to unlock achievements.",
     });
   }
@@ -1172,4 +1303,12 @@ function diffNumbers_(current, baseline) {
 function roundToOne_(value) {
   if (value === null || typeof value === "undefined" || isNaN(value)) return null;
   return Math.round(value * 10) / 10;
+}
+
+function normalizeWeekFilter_(val) {
+  if (val === null || typeof val === "undefined") return null;
+  var num = Number(val);
+  if (!isFinite(num)) return null;
+  var rounded = Math.round(num);
+  return rounded >= 0 ? rounded : null;
 }

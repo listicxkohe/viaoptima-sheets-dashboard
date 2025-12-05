@@ -3,13 +3,90 @@
  * Builds a quick PDF with inline charts for sharing.
  ************************************************/
 
-function downloadScorecardPdf(transporterId) {
+function downloadScorecardPdf(transporterId, weekFilter) {
+  var pdf = generateScorecardPdf_(transporterId, weekFilter);
+  return {
+    fileName: pdf.fileName,
+    base64: Utilities.base64Encode(pdf.blob.getBytes()),
+    mimeType: pdf.mimeType,
+  };
+}
+
+/**
+ * Send a scorecard PDF via email.
+ * Supports two modes:
+ * 1) Payload with base64 snapshot from client (preferred for visual fidelity).
+ * 2) Plain transporterId + weekFilter to generate server-side.
+ */
+function emailScorecardPdf(payloadOrId, weekFilter) {
+  var hasPayloadObject =
+    payloadOrId && typeof payloadOrId === "object" && !Array.isArray(payloadOrId);
+
+  var transporterId = hasPayloadObject
+    ? sanitizeTransporterId_(payloadOrId.transporterId)
+    : sanitizeTransporterId_(payloadOrId);
+  if (!transporterId) {
+    throw new Error("Transporter ID is required to email a scorecard.");
+  }
+
+  var week = normalizeWeekFilter_ ? normalizeWeekFilter_(weekFilter || (hasPayloadObject ? payloadOrId.weekFilter : null)) : null;
+  var data = getDriverScorecardData(transporterId, week);
+  if (!data || !data.driver) {
+    throw new Error("Unable to load scorecard data for " + transporterId + ".");
+  }
+
+  var blob;
+  var fileName;
+
+  if (hasPayloadObject && payloadOrId.base64) {
+    var base64 = String(payloadOrId.base64 || "");
+    var parts = base64.split(",");
+    if (parts.length > 1) {
+      base64 = parts[1];
+    }
+    if (!base64) {
+      throw new Error("PDF data missing; unable to send scorecard.");
+    }
+    fileName = payloadOrId.fileName || "scorecard.pdf";
+    var bytes = Utilities.base64Decode(base64);
+    blob = Utilities.newBlob(bytes, "application/pdf", fileName);
+  } else {
+    var pdf = generateScorecardPdf_(transporterId, week);
+    blob = pdf.blob;
+    fileName = pdf.fileName;
+  }
+
+  var weekLabel = buildScorecardWeekLabel_(data);
+  var subject =
+    "ViaOptima | " +
+    (data.driver.name || data.driver.transporterId || "Driver") +
+    " scorecard" +
+    (weekLabel ? " - " + weekLabel : "");
+
+  var bodyHtml = buildSnapshotEmailHtml_(data, weekLabel, fileName);
+  var bodyText = buildSnapshotEmailText_(data, weekLabel);
+
+  var to = "kiragod00@gmail.com";
+  MailApp.sendEmail({
+    to: to,
+    subject: subject,
+    body: bodyText,
+    htmlBody: bodyHtml,
+    attachments: [blob],
+  });
+
+  return { success: true, sentTo: to };
+}
+
+// Internal helper to build the PDF blob; shared by download/email.
+function generateScorecardPdf_(transporterId, weekFilter) {
   var id = sanitizeTransporterId_(transporterId);
   if (!id) {
     throw new Error("Transporter ID is required to export a scorecard.");
   }
+  var week = normalizeWeekFilter_ ? normalizeWeekFilter_(weekFilter) : null;
 
-  var data = getDriverScorecardData(id);
+  var data = getDriverScorecardData(id, week);
   if (!data || !data.driver) {
     throw new Error("Unable to load scorecard data for " + id + ".");
   }
@@ -20,13 +97,9 @@ function downloadScorecardPdf(transporterId) {
   body.setMarginTop(18).setMarginBottom(18).setMarginLeft(24).setMarginRight(24);
 
   appendHeader_(body, data);
+  appendScorePanel_(body, data);
   appendMetricCards_(body, data);
   appendComparisonCards_(body, data);
-  appendCharts_(body, data);
-  appendRescues_(body, data);
-  appendRoutes_(body, data);
-  appendHistory_(body, data);
-  appendSpotlight_(body, data);
 
   doc.saveAndClose();
 
@@ -40,9 +113,240 @@ function downloadScorecardPdf(transporterId) {
 
   return {
     fileName: fileName,
-    base64: Utilities.base64Encode(blob.getBytes()),
     mimeType: blob.getContentType(),
+    blob: blob,
+    driverName: data.driver.name || "",
+    transporterId: id,
+    data: data,
   };
+}
+
+function buildScorecardWeekLabel_(data) {
+  if (!data) return "";
+  var tz =
+    (data.weekWindow && data.weekWindow.tz) ||
+    (SpreadsheetApp.getActive && SpreadsheetApp.getActive().getSpreadsheetTimeZone
+      ? SpreadsheetApp.getActive().getSpreadsheetTimeZone()
+      : Session.getScriptTimeZone && Session.getScriptTimeZone()) ||
+    "Etc/UTC";
+
+  var range = "";
+  if (data.weekWindow && data.weekWindow.start && data.weekWindow.end) {
+    var start = Utilities.formatDate(data.weekWindow.start, tz, "d MMM yyyy");
+    var end = Utilities.formatDate(data.weekWindow.end, tz, "d MMM yyyy");
+    range = start + " - " + end;
+  } else if (data.driver && data.driver.lastWeekLabel) {
+    range = "Through " + data.driver.lastWeekLabel;
+  }
+
+  if (data.appliedWeek != null) {
+    return "Week " + data.appliedWeek + (range ? " (" + range + ")" : "");
+  }
+  return range || "Overall (all weeks)";
+}
+
+function buildScorecardEmailText_(data, weekLabel) {
+  var driver = data && data.driver ? data.driver : {};
+  var metrics = data && data.metrics ? data.metrics : {};
+  var rescues = data && data.rescues ? data.rescues : {};
+  var comparisons = data && data.comparisons ? data.comparisons : {};
+  var lines = [];
+  lines.push("Driver scorecard");
+  lines.push("Driver: " + (driver.name || "Driver"));
+  lines.push("Transporter ID: " + (driver.transporterId || "N/A"));
+  lines.push("Status: " + (driver.status || "N/A"));
+  lines.push("Scope: " + (weekLabel || "Overall"));
+  lines.push("");
+  lines.push(
+    "Score: " +
+      (driver.score != null ? driver.score.toFixed(1) : "N/A") +
+      (driver.rank ? " | Rank #" + driver.rank : "")
+  );
+  lines.push("Deliveries: " + formatScorecardNumber_(metrics.deliveries));
+  lines.push(
+    "Avg DCR/POD/CC: " +
+      [metrics.avgDcr, metrics.avgPod, metrics.avgCc]
+        .map(formatScorecardPercent_)
+        .join(" | ")
+  );
+  lines.push(
+    "Rescues given/taken: " +
+      formatScorecardNumber_(rescues.totalGiven) +
+      " / " +
+      formatScorecardNumber_(rescues.totalTaken)
+  );
+  lines.push(
+    "Gap to leader: " +
+      (comparisons && comparisons.scoreVsTop != null
+        ? Math.abs(comparisons.scoreVsTop).toFixed(1) + " pts"
+        : "N/A")
+  );
+  lines.push("");
+  lines.push("PDF attached.");
+  return lines.join("\n");
+}
+
+function buildScorecardEmailHtml_(data, weekLabel, fileName) {
+  var driver = data && data.driver ? data.driver : {};
+  var metrics = data && data.metrics ? data.metrics : {};
+  var rescues = data && data.rescues ? data.rescues : {};
+  var comparisons = data && data.comparisons ? data.comparisons : {};
+  var dsp =
+    driver.dspList && driver.dspList.length
+      ? driver.dspList.join(", ")
+      : "N/A";
+  var rankText = driver.rank
+    ? "#" + driver.rank + (driver.totalDrivers ? " of " + driver.totalDrivers : "")
+    : "Not ranked yet";
+  var scoreText =
+    driver.score != null ? driver.score.toFixed(1) + " pts" : "N/A";
+  var gapText =
+    comparisons && comparisons.scoreVsTop != null
+      ? Math.abs(comparisons.scoreVsTop).toFixed(1) + " pts"
+      : "N/A";
+
+  function pct(val) {
+    return val == null ? "N/A" : Number(val).toFixed(1) + "%";
+  }
+  function num(val) {
+    return formatScorecardNumber_(val);
+  }
+
+  var html =
+    '<div style="font-family:\'Segoe UI\',Arial,sans-serif;background:#f8fafc;color:#0f172a;">' +
+    '<div style="background:#0f172a;color:#e2e8f0;padding:16px 20px;font-size:16px;font-weight:600;">' +
+    "ViaOptima | Driver scorecard" +
+    "</div>" +
+    '<div style="padding:20px;">' +
+    '<div style="background:#ffffff;border:1px solid #e5e7eb;border-radius:12px;padding:16px 18px;margin-bottom:12px;">' +
+    '<div style="font-size:18px;font-weight:700;margin-bottom:4px;">' +
+    (driver.name || "Driver") +
+    "</div>" +
+    '<div style="font-size:13px;color:#6b7280;margin-bottom:6px;">' +
+    "Transporter ID: " +
+    (driver.transporterId || "N/A") +
+    " | Status: " +
+    (driver.status || "N/A") +
+    "</div>" +
+    '<div style="font-size:13px;color:#6b7280;margin-bottom:6px;">DSP: ' +
+    dsp +
+    "</div>" +
+    '<div style="font-size:13px;color:#111827;font-weight:600;">' +
+    "Scope: " +
+    (weekLabel || "Overall") +
+    "</div>" +
+    (driver.summaryNote
+      ? '<div style="font-size:12px;color:#6b7280;margin-top:4px;">' +
+        driver.summaryNote +
+        "</div>"
+      : "") +
+    "</div>" +
+    '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px;margin-bottom:12px;">' +
+    buildMetricCard_("Score", scoreText, rankText, "#2563eb") +
+    buildMetricCard_("Deliveries", num(metrics.deliveries), "Total deliveries", "#0ea5e9") +
+    buildMetricCard_("Avg DCR", pct(metrics.avgDcr), "Quality", "#16a34a") +
+    buildMetricCard_("Avg POD", pct(metrics.avgPod), "Proof of delivery", "#6366f1") +
+    buildMetricCard_("Avg CC", pct(metrics.avgCc), "Customer care", "#f97316") +
+    buildMetricCard_(
+      "Rescues",
+      num(rescues.totalGiven) + " given / " + num(rescues.totalTaken) + " taken",
+      "Balance across weeks",
+      "#7c3aed"
+    ) +
+    buildMetricCard_("Gap to leader", gapText, "Delta to #1", "#0ea5e9") +
+    "</div>" +
+    '<div style="font-size:12px;color:#6b7280;margin-top:8px;">Attached: ' +
+    (fileName || "scorecard.pdf") +
+    "</div>" +
+    "</div>" +
+    "</div>";
+
+  return html;
+}
+
+function buildSnapshotEmailText_(data, weekLabel) {
+  var driver = data && data.driver ? data.driver : {};
+  var lines = [];
+  lines.push("Hello,");
+  lines.push("");
+  lines.push(
+    "Attached is the latest scorecard for " +
+      (driver.name || "your driver") +
+      "."
+  );
+  lines.push("Transporter ID: " + (driver.transporterId || "N/A"));
+  lines.push("Scope: " + (weekLabel || "Overall coverage"));
+  lines.push("");
+  lines.push("Thank you,");
+  lines.push("ViaOptima Dashboard");
+  return lines.join("\n");
+}
+
+function buildSnapshotEmailHtml_(data, weekLabel, fileName) {
+  var driver = data && data.driver ? data.driver : {};
+  var dsp =
+    driver.dspList && driver.dspList.length
+      ? driver.dspList.join(", ")
+      : "N/A";
+  var html =
+    '<div style="font-family:\'Segoe UI\',Arial,sans-serif;background:#f6f7fb;color:#0f172a;padding:20px;">' +
+    '<div style="max-width:640px;margin:0 auto;background:#ffffff;border:1px solid #e5e7eb;border-radius:12px;overflow:hidden;">' +
+    '<div style="background:#0f172a;color:#e2e8f0;padding:14px 18px;font-size:16px;font-weight:600;">' +
+    "ViaOptima | Driver scorecard" +
+    "</div>" +
+    '<div style="padding:18px 18px 4px 18px;font-size:14px;color:#0f172a;">' +
+    "<p style=\"margin:0 0 10px 0;\">Hello,</p>" +
+    "<p style=\"margin:0 0 10px 0;\">Attached is the latest scorecard for <strong>" +
+    (driver.name || "your driver") +
+    "</strong>.</p>" +
+    '<div style="background:#f8fafc;border:1px solid #e5e7eb;border-radius:10px;padding:12px 14px;margin:10px 0;">' +
+    '<div style="font-size:12px;text-transform:uppercase;letter-spacing:0.05em;color:#6b7280;">Summary</div>' +
+    '<div style="margin-top:6px;font-size:14px;font-weight:600;color:#0f172a;">' +
+    (driver.name || "Driver") +
+    "</div>" +
+    '<div style="font-size:12px;color:#6b7280;margin-top:2px;">Transporter ID: ' +
+    (driver.transporterId || "N/A") +
+    "</div>" +
+    '<div style="font-size:12px;color:#6b7280;margin-top:2px;">DSP: ' +
+    dsp +
+    "</div>" +
+    '<div style="font-size:12px;color:#111827;margin-top:6px;">Scope: ' +
+    (weekLabel || "Overall coverage") +
+    "</div>" +
+    (driver.status
+      ? '<div style="font-size:12px;color:#6b7280;margin-top:2px;">Status: ' +
+        driver.status +
+        "</div>"
+      : "") +
+    "</div>" +
+    "<p style=\"margin:6px 0 0 0;font-size:12px;color:#6b7280;\">Attachment: " +
+    (fileName || "scorecard.pdf") +
+    "</p>" +
+    "<p style=\"margin:14px 0 6px 0;\">Thank you,<br>ViaOptima Dashboard</p>" +
+    "</div>" +
+    "</div>" +
+    "</div>";
+  return html;
+}
+
+function buildMetricCard_(label, value, sub, color) {
+  return (
+    '<div style="background:#ffffff;border:1px solid #e5e7eb;border-radius:12px;padding:12px 14px;">' +
+    '<div style="font-size:11px;text-transform:uppercase;letter-spacing:0.05em;color:#6b7280;">' +
+    label +
+    "</div>" +
+    '<div style="font-size:18px;font-weight:700;color:#0f172a;margin-top:4px;">' +
+    value +
+    "</div>" +
+    (sub
+      ? '<div style="font-size:12px;color:' +
+        (color || "#6b7280") +
+        ';margin-top:4px;">' +
+        sub +
+        "</div>"
+      : "") +
+    "</div>"
+  );
 }
 
 function appendHeader_(body, data) {
@@ -51,7 +355,8 @@ function appendHeader_(body, data) {
   table.setBorderWidth(0);
   var row = table.appendTableRow();
   var left = row.appendTableCell();
-  left.setPaddingTop(6).setPaddingBottom(6).setPaddingLeft(6).setPaddingRight(6);
+  left.setBackgroundColor("#ffffff");
+  left.setPaddingTop(8).setPaddingBottom(8).setPaddingLeft(10).setPaddingRight(10);
   left.appendParagraph("Driver scorecard").setHeading(DocumentApp.ParagraphHeading.HEADING1);
   left.appendParagraph(driver.name || "Driver").setHeading(DocumentApp.ParagraphHeading.HEADING2);
   left.appendParagraph((driver.transporterId || "N/A") + " | " + (driver.status || "Unknown"));
@@ -62,13 +367,32 @@ function appendHeader_(body, data) {
     "Weeks tracked: " + (driver.weeks != null ? driver.weeks : "N/A")
   );
   var right = row.appendTableCell();
-  right.setPaddingTop(6).setPaddingBottom(6).setPaddingLeft(6).setPaddingRight(6);
+  right.setPaddingTop(12).setPaddingBottom(12).setPaddingLeft(14).setPaddingRight(14);
+  right.setBackgroundColor("#f1f5f9");
   var scorePara = right.appendParagraph("Score");
   scorePara.setBold(true).setForegroundColor("#6b7280");
   var scoreVal = right.appendParagraph(driver.score != null ? driver.score.toFixed(1) : "N/A");
-  scoreVal.setBold(true).setFontSize(26);
-  right.appendParagraph(driver.teamStanding || "").setForegroundColor("#6b7280");
-  right.setBackgroundColor("#f8fafc");
+  scoreVal.setBold(true).setFontSize(32).setForegroundColor("#111827");
+  right.appendParagraph(driver.teamStanding || "").setForegroundColor("#475569");
+}
+
+// Highlight score + rank in its own panel.
+function appendScorePanel_(body, data) {
+  var table = body.appendTable();
+  table.setBorderWidth(0);
+  var row = table.appendTableRow();
+  var cell = row.appendTableCell();
+  cell.setBackgroundColor("#e2e8f0");
+  cell.setPaddingTop(12).setPaddingBottom(12).setPaddingLeft(14).setPaddingRight(14);
+  var driver = data.driver || {};
+  var rankText = driver.rank != null ? "Rank #" + driver.rank : "Unranked";
+  var totalText = driver.totalDrivers ? " of " + driver.totalDrivers : "";
+  cell.appendParagraph("Score").setBold(true).setForegroundColor("#475569");
+  var scoreVal = cell.appendParagraph(
+    driver.score != null ? driver.score.toFixed(1) : "N/A"
+  );
+  scoreVal.setBold(true).setFontSize(30).setForegroundColor("#0f172a");
+  cell.appendParagraph(rankText + totalText).setForegroundColor("#475569");
 }
 
 function appendMetricCards_(body, data) {
@@ -111,103 +435,10 @@ function appendComparisonCards_(body, data) {
     { label: "Gap to rank #1", value: formatScorecardDelta_(-comps.scoreVsTop, "pts"), note: "Points away from leader" },
     { label: "Deliveries vs avg", value: formatScorecardDelta_(comps.deliveriesDiff, ""), note: buildAvgText_(comps.averages && comps.averages.deliveries, "deliveries") },
     { label: "Quality vs avg", value: formatScorecardDelta_(comps.qualityDiff, "pts"), note: buildAvgText_(comps.averages && comps.averages.quality, "quality") },
-    { label: "Rescue balance", value: formatScorecardDelta_(comps.rescueDiff, ""), note: buildAvgText_(comps.averages && comps.averages.rescueBalance, "balance") },
     { label: "Deliveries / week", value: formatScorecardDelta_(comps.deliveriesPerWeekDiff, ""), note: "Vs team average" },
-    { label: "Experience", value: formatScorecardDelta_(comps.weeksDiff, "wks"), note: "Weeks vs average" },
     { label: "Percentile", value: comps.percentile != null ? "Top " + comps.percentile + "%" : "N/A", note: "" },
   ];
   appendCardGrid_(body, items, 3);
-}
-
-function appendCharts_(body, data) {
-  var charts = data.charts || {};
-  var rowTable = body.appendTable();
-  rowTable.setBorderWidth(0);
-  var row = rowTable.appendTableRow();
-
-  var dailyBlob = buildDailyChartImage_(charts.dailyDeliveries || []);
-  var dailyCell = row.appendTableCell();
-  dailyCell.setPaddingTop(6).setPaddingBottom(6).setPaddingLeft(6).setPaddingRight(6);
-  dailyCell.appendParagraph("Daily deliveries (last 7 days)").setBold(true);
-  if (dailyBlob) dailyCell.appendImage(dailyBlob).setWidth(320);
-
-  var scoreBlob = buildScoreChartImage_(charts.weeklyScores || []);
-  var scoreCell = row.appendTableCell();
-  scoreCell.setPaddingTop(6).setPaddingBottom(6).setPaddingLeft(6).setPaddingRight(6);
-  scoreCell.appendParagraph("Weekly score progress").setBold(true);
-  if (scoreBlob) scoreCell.appendImage(scoreBlob).setWidth(320);
-}
-
-function appendRescues_(body, data) {
-  var rescues = data.rescues || {};
-  body.appendParagraph("Rescues").setHeading(
-    DocumentApp.ParagraphHeading.HEADING3
-  );
-  var items = [
-    { label: "Given per week", value: formatScorecardNumber_(rescues.avgGivenPerWeek) },
-    { label: "Taken per week", value: formatScorecardNumber_(rescues.avgTakenPerWeek) },
-    { label: "Total given", value: formatScorecardNumber_(rescues.totalGiven) },
-    { label: "Total taken", value: formatScorecardNumber_(rescues.totalTaken) },
-  ];
-  appendCardGrid_(body, items, 2);
-}
-
-function appendRoutes_(body, data) {
-  var additional = data.additional || {};
-  var topRoutes = (data.routes && data.routes.top) || [];
-  body.appendParagraph("Route insights").setHeading(
-    DocumentApp.ParagraphHeading.HEADING3
-  );
-  var items = [
-    { label: "Avg stops per route", value: formatScorecardNumber_(additional.avgStops) },
-    { label: "Total routes", value: formatScorecardNumber_(additional.totalRoutes) },
-  ];
-  appendCardGrid_(body, items, 2);
-
-  if (topRoutes.length) {
-    body.appendParagraph("Top routes").setHeading(
-      DocumentApp.ParagraphHeading.HEADING4
-    );
-    var tableRows = [["Route", "Deliveries"]];
-    for (var i = 0; i < topRoutes.length; i++) {
-      tableRows.push([
-        topRoutes[i].route || "(unknown)",
-        formatScorecardNumber_(topRoutes[i].deliveries),
-      ]);
-    }
-    var table = body.appendTable(tableRows);
-    styleScorecardTableHeader_(table.getRow(0));
-  }
-}
-
-function appendHistory_(body, data) {
-  var weeks = (data.history && data.history.weekly) || [];
-  if (!weeks.length) return;
-  body.appendParagraph("Recent weekly highlights").setHeading(
-    DocumentApp.ParagraphHeading.HEADING3
-  );
-  var lastWeeks = weeks.slice(-5);
-  for (var i = 0; i < lastWeeks.length; i++) {
-    var row = lastWeeks[i];
-    var labelParts = [];
-    if (row.week != null) labelParts.push("Week " + row.week);
-    if (row.weDate) labelParts.push(row.weDate);
-    var line = labelParts.join(" - ") || "Week detail";
-    line += ": " + formatScorecardNumber_(row.delivered) + " deliveries";
-    body.appendParagraph("• " + line);
-  }
-}
-
-function appendSpotlight_(body, data) {
-  var spotlight = data.spotlight || [];
-  if (!spotlight.length) return;
-  body.appendParagraph("Driver spotlight").setHeading(
-    DocumentApp.ParagraphHeading.HEADING3
-  );
-  for (var i = 0; i < spotlight.length; i++) {
-    var item = spotlight[i];
-    body.appendParagraph("• " + (item.title || "") + " — " + (item.detail || ""));
-  }
 }
 
 function appendCardGrid_(body, items, columns) {
@@ -243,43 +474,6 @@ function appendCardGrid_(body, items, columns) {
       idx++;
     }
   }
-}
-
-function buildDailyChartImage_(points) {
-  if (!points || !points.length) return null;
-  var dataTable = Charts.newDataTable();
-  dataTable.addColumn(Charts.ColumnType.STRING, "Day");
-  dataTable.addColumn(Charts.ColumnType.NUMBER, "Deliveries");
-  for (var i = 0; i < points.length; i++) {
-    dataTable.addRow([points[i].label || "", Number(points[i].value || 0)]);
-  }
-  var chart = Charts.newColumnChart()
-    .setDataTable(dataTable)
-    .setDimensions(520, 300)
-    .setColors(["#60a5fa"])
-    .setLegendPosition(Charts.Position.NONE)
-    .setOption("chartArea", { width: "80%", height: "70%" })
-    .build();
-  return chart.getAs("image/png");
-}
-
-function buildScoreChartImage_(points) {
-  if (!points || !points.length) return null;
-  var dataTable = Charts.newDataTable();
-  dataTable.addColumn(Charts.ColumnType.STRING, "Week");
-  dataTable.addColumn(Charts.ColumnType.NUMBER, "Score");
-  for (var i = 0; i < points.length; i++) {
-    if (points[i].score == null) continue;
-    dataTable.addRow([points[i].label || "", Number(points[i].score)]);
-  }
-  var chart = Charts.newLineChart()
-    .setDataTable(dataTable)
-    .setDimensions(520, 300)
-    .setColors(["#a78bfa"])
-    .setLegendPosition(Charts.Position.NONE)
-    .setOption("chartArea", { width: "80%", height: "70%" })
-    .build();
-  return chart.getAs("image/png");
 }
 
 function buildTrendText_(trend, isPercent) {

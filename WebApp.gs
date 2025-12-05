@@ -12,6 +12,10 @@ function doGet(e) {
       : "";
   var name =
     e && e.parameter && e.parameter.name ? String(e.parameter.name).trim() : "";
+  var week =
+    e && e.parameter && typeof e.parameter.week !== "undefined"
+      ? normalizeWeekFilter_(e.parameter.week)
+      : null;
 
   if (!id) {
     return HtmlService.createHtmlOutput("Missing transporter id.");
@@ -20,6 +24,7 @@ function doGet(e) {
   var tpl = HtmlService.createTemplateFromFile("scorecard_page");
   tpl.transporterId = id;
   tpl.driverName = name;
+  tpl.initialWeek = week;
 
   return tpl
     .evaluate()

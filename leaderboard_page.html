@@ -533,7 +533,7 @@
             }
             alert("Could not open scorecard:\n" + message);
           })
-          .openDriverScorecardDialog(transporterId, driverName || "");
+          .openDriverScorecardDialog(transporterId, driverName || "", selectedWeek);
       }
 
       function renderTable() {

@@ -11,21 +11,24 @@
       .avatar { width: 72px; height: 72px; border-radius: 18px; background: linear-gradient(145deg,#2563eb,#3b82f6); color: #fff; font-size: 28px; font-weight: 600; display: flex; align-items: center; justify-content: center; }
       .driver-name { font-size: 20px; font-weight: 600; margin-bottom: 4px; }
       .driver-meta, .driver-note { font-size: 12px; color: #6b7280; }
-      .driver-actions { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; justify-content: space-between; flex: 1; }
+      .driver-actions { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; justify-content: flex-end; flex: 1; margin-left: auto; }
+      .score-stack { display:flex; align-items:center; gap:14px; padding:10px 14px; border-radius:14px; background:#f8fafc; box-shadow: inset 0 1px 0 #e5e7eb; }
       .back-btn { border: none; border-radius: 999px; padding: 8px 18px; background: #e0e7ff; color: #1d4ed8; font-weight: 600; cursor: pointer; }
       .back-btn:hover { background: #c7d2fe; }
       .driver-rank { display:flex; align-items:center; gap:12px; }
       .rank-chip { background:#f3f4f6; color:#111827; border-radius:999px; padding:10px 18px; font-weight:600; font-size:15px; min-width:110px; text-align:center; display:flex; align-items:center; justify-content:center; gap:6px; }
       .rank-chip.top-1,.rank-chip.top-2,.rank-chip.top-3 { background: linear-gradient(135deg,#fde68a,#facc15); color:#78350f; }
-      .rank-chip.top-1::before { content:"??"; }
-      .rank-chip.top-2::before { content:"??"; }
-      .rank-chip.top-3::before { content:"??"; }
+      .rank-chip.top-1::before { content:"🥇"; }
+      .rank-chip.top-2::before { content:"🥈"; }
+      .rank-chip.top-3::before { content:"🥉"; }
       .score-box { text-align:right; }
       .score-label { text-transform:uppercase; font-size:11px; color:#6b7280; letter-spacing:0.04em; }
       .score-value { font-size:32px; font-weight:700; }
       .rank-standing { font-size:12px; color:#6b7280; }
       .control-actions { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
       .control-actions .action-btn { padding:8px 14px; }
+      .top-actions { justify-content:flex-end; margin-bottom:12px; }
+      .top-actions select { min-width:180px; }
       .metrics-row { display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:12px; margin:18px 0; }
       .metric-card { background:#fff; border-radius:16px; padding:14px 16px; box-shadow:0 10px 18px rgba(15,23,42,0.08); }
       .metric-label { text-transform:uppercase; font-size:11px; color:inherit; letter-spacing:0.04em; }
@@ -100,6 +103,15 @@
 
       <div class="error-banner" id="errorBanner"></div>
 
+      <div class="control-actions top-actions no-export">
+        <select class="chart-select" id="weekFilterSelect">
+          <option value="">Overall (all weeks)</option>
+        </select>
+        <button class="back-btn action-btn" id="btnBack">← Back to leaderboard</button>
+        <button class="action-btn" id="btnEmailPdf">Email PDF</button>
+        <button class="action-btn primary" id="btnDownloadPdf">Download PDF</button>
+      </div>
+
       <div class="head-card">
         <div class="driver-info">
           <div class="avatar" id="driverAvatar">--</div>
@@ -116,17 +128,15 @@
           </div>
         </div>
         <div class="driver-actions">
-          <div class="driver-rank">
-            <div class="rank-chip" id="driverRankBadge">#</div>
+          <div class="score-stack">
+            <div class="driver-rank">
+              <div class="rank-chip" id="driverRankBadge">#</div>
+            </div>
             <div class="score-box">
               <div class="score-label">Score</div>
               <div class="score-value" id="driverScore">0.0</div>
               <div class="rank-standing" id="driverStanding"></div>
             </div>
-          </div>
-          <div class="control-actions no-export">
-            <button class="back-btn action-btn" id="btnBack">← Back to leaderboard</button>
-            <button class="action-btn primary" id="btnDownloadPdf">Download PDF</button>
           </div>
         </div>
       </div>
@@ -161,11 +171,7 @@
       <div class="content-grid">
         <div class="panel large">
           <div class="chart-header">
-            <div class="panel-title">Daily deliveries by week</div>
-            <select class="chart-select" id="dailyWeekSelect">
-              <option value="current">Current week (Sun–Sat)</option>
-              <option value="last">Last week (Sun–Sat)</option>
-            </select>
+            <div class="panel-title">Deliveries</div>
           </div>
           <div class="chart-container">
             <canvas id="dailyChart"></canvas>
@@ -304,10 +310,11 @@
     <script>
       const SCORECARD_TRANSPORTER_ID = <?!= JSON.stringify(transporterId || "") ?>;
       const INITIAL_DRIVER_NAME = <?!= JSON.stringify(driverName || "") ?>;
+      const INITIAL_WEEK = <?!= JSON.stringify(typeof initialWeek === "number" ? initialWeek : null) ?>;
       let dailyChart = null;
       let rescueChart = null;
       let scoreChart = null;
-      let dailyWeekSelection = "current";
+      let activeWeekFilter = INITIAL_WEEK != null ? INITIAL_WEEK : null;
       let cachedCharts = null;
 
       document.addEventListener("DOMContentLoaded", function () {
@@ -323,11 +330,16 @@
         if (pdfBtn) {
           pdfBtn.addEventListener("click", startPdfDownload);
         }
-        var weekSelect = document.getElementById("dailyWeekSelect");
-        if (weekSelect) {
-          weekSelect.addEventListener("change", function (e) {
-            dailyWeekSelection = e.target.value || "current";
-            renderDailyChart(cachedCharts || {});
+        var emailBtn = document.getElementById("btnEmailPdf");
+        if (emailBtn) {
+          emailBtn.addEventListener("click", startEmailSend);
+        }
+        var weekFilterSelect = document.getElementById("weekFilterSelect");
+        if (weekFilterSelect) {
+          weekFilterSelect.addEventListener("change", function (e) {
+            var val = e.target.value;
+            activeWeekFilter = val === "" ? null : Number(val);
+            fetchScorecard();
           });
         }
         fetchScorecard();
@@ -338,7 +350,11 @@
           showError("Transporter ID is missing for this scorecard.");
           return;
         }
-        setLoading(true, "Loading scorecard...");
+        var msg = "Loading scorecard...";
+        if (activeWeekFilter != null) {
+          msg = "Loading week " + activeWeekFilter + " scorecard...";
+        }
+        setLoading(true, msg);
         showError("");
         google.script.run
           .withSuccessHandler(function (data) {
@@ -351,7 +367,7 @@
               err && err.message ? err.message : "Failed to load scorecard data."
             );
           })
-          .getDriverScorecardData(SCORECARD_TRANSPORTER_ID);
+          .getDriverScorecardData(SCORECARD_TRANSPORTER_ID, activeWeekFilter);
       }
 
       function handleBackAction() {
@@ -389,48 +405,94 @@
         }
       }
 
+      async function startEmailSend() {
+        if (!SCORECARD_TRANSPORTER_ID) {
+          showError("Transporter ID missing; cannot email PDF.");
+          return;
+        }
+        try {
+          showError("");
+          setLoading(true, "Rendering & emailing PDF...");
+          var snap = await renderScorecardSnapshot();
+          var dataUri = snap.pdf.output("datauristring");
+          var parts = dataUri.split(",");
+          if (!parts || parts.length < 2) {
+            throw new Error("Unable to build PDF data.");
+          }
+          var base64 = parts[1];
+          await new Promise(function (resolve, reject) {
+            google.script.run
+              .withSuccessHandler(resolve)
+              .withFailureHandler(reject)
+              .emailScorecardPdf({
+                transporterId: SCORECARD_TRANSPORTER_ID,
+                weekFilter: activeWeekFilter,
+                fileName: snap.fileName,
+                base64: base64,
+              });
+          });
+          alert("Scorecard emailed successfully.");
+        } catch (err) {
+          showError(
+            err && err.message ? err.message : "Failed to email scorecard PDF."
+          );
+        } finally {
+          setLoading(false);
+        }
+      }
+
       function startPdfDownload() {
         if (!SCORECARD_TRANSPORTER_ID) {
           showError("Transporter ID missing; cannot export PDF.");
           return;
         }
-        generateClientPdf();
+        setLoading(true, "Rendering PDF...");
+        showError("");
+        renderScorecardSnapshot()
+          .then(function (snap) {
+            snap.pdf.save(snap.fileName);
+          })
+          .catch(function (err) {
+            showError(err && err.message ? err.message : "Failed to render PDF.");
+          })
+          .finally(function () {
+            setLoading(false);
+          });
       }
 
-      async function generateClientPdf() {
-        try {
-          setLoading(true, "Rendering PDF...");
-          showError("");
-          var shell = document.querySelector(".scorecard-shell");
-          if (!shell) {
-            throw new Error("Scorecard container not found.");
-          }
-          window.scrollTo(0, 0);
-          var overlay = document.getElementById("loadingOverlay");
-          var priorOverlayDisplay = overlay ? overlay.style.display : null;
-          if (overlay) overlay.style.display = "none";
-          var canvas = await html2canvas(shell, {
-            scale: 2,
-            useCORS: true,
-            ignoreElements: function (el) {
-              if (el && el.id === "loadingOverlay") return true;
-              return el && el.classList && el.classList.contains("no-export");
-            },
-          });
-          if (overlay && priorOverlayDisplay !== null) {
-            overlay.style.display = priorOverlayDisplay;
-          }
-          var imgData = canvas.toDataURL("image/png");
-          // Build a single-page PDF sized to the rendered canvas to avoid mid-content page breaks.
-          var pdf = new jspdf.jsPDF("p", "px", [canvas.width, canvas.height]);
-          pdf.addImage(imgData, "PNG", 0, 0, canvas.width, canvas.height);
-          var fileName = (document.getElementById("driverName").textContent || "driver_scorecard") + ".pdf";
-          pdf.save(fileName);
-        } catch (err) {
-          showError(err && err.message ? err.message : "Failed to render PDF.");
-        } finally {
-          setLoading(false);
+      async function renderScorecardSnapshot() {
+        var shell = document.querySelector(".scorecard-shell");
+        if (!shell) {
+          throw new Error("Scorecard container not found.");
         }
+        window.scrollTo(0, 0);
+        var overlay = document.getElementById("loadingOverlay");
+        var priorOverlayDisplay = overlay ? overlay.style.display : null;
+        if (overlay) overlay.style.display = "none";
+        var renderPromise = html2canvas(shell, {
+          scale: 1.25, // keep payload smaller for emailing
+          useCORS: true,
+          ignoreElements: function (el) {
+            if (el && el.id === "loadingOverlay") return true;
+            return el && el.classList && el.classList.contains("no-export");
+          },
+        });
+        var timeoutPromise = new Promise(function (_resolve, reject) {
+          setTimeout(function () {
+            reject(new Error("Rendering timed out. Try again or reduce page size."));
+          }, 20000);
+        });
+        var canvas = await Promise.race([renderPromise, timeoutPromise]);
+        if (overlay && priorOverlayDisplay !== null) {
+          overlay.style.display = priorOverlayDisplay;
+        }
+        var imgData = canvas.toDataURL("image/jpeg", 0.82);
+        var pdf = new jspdf.jsPDF("p", "px", [canvas.width, canvas.height]);
+        pdf.addImage(imgData, "JPEG", 0, 0, canvas.width, canvas.height);
+        var fileName =
+          (document.getElementById("driverName").textContent || "driver_scorecard") +
+          ".pdf";
+        return { pdf: pdf, fileName: fileName };
       }
 
       function renderScorecard(data) {
@@ -439,6 +501,8 @@
           return;
         }
         showError("");
+        renderWeekOptions(data.weekOptions || [], data.appliedWeek);
+        activeWeekFilter = data.appliedWeek != null ? data.appliedWeek : null;
 
         var driver = data.driver;
         setText("driverName", driver.name || "Driver");
@@ -518,9 +582,6 @@
 
         var charts = data.charts || {};
         cachedCharts = charts;
-        dailyWeekSelection = "current";
-        var weekSelect = document.getElementById("dailyWeekSelect");
-        if (weekSelect) weekSelect.value = "current";
         renderDailyChart(charts);
         renderRescueChart(charts);
         renderScoreChart(charts);
@@ -582,22 +643,26 @@
 
       function renderDailyChart(charts) {
         cachedCharts = charts;
-        var selection = dailyWeekSelection || "current";
         var buckets = null;
         var maxValue = 0;
-        if (charts && charts.weeklyBuckets) {
-          var wk = charts.weeklyBuckets[selection];
-          if (wk && wk.buckets) {
-            buckets = wk.buckets;
-            maxValue = wk.max || 0;
-          }
-        }
-        if (!buckets) {
+        if (activeWeekFilter == null && charts && charts.dailyOverall) {
+          buckets = charts.dailyOverall.buckets || [];
+          maxValue = charts.dailyOverall.max || 0;
+        } else if (charts && charts.weeklyBuckets && charts.weeklyBuckets.current) {
+          buckets = charts.weeklyBuckets.current.buckets || [];
+          maxValue = charts.weeklyBuckets.current.max || 0;
+        } else {
           buckets = (charts && charts.dailyDeliveries) || [];
           maxValue = (charts && charts.dailyMax) || 0;
         }
         var canvas = document.getElementById("dailyChart");
         var empty = document.getElementById("dailyChartEmpty");
+        if (empty) {
+          empty.textContent =
+            activeWeekFilter != null
+              ? "No deliveries captured for the selected week."
+              : "No deliveries captured for the latest week.";
+        }
         var values = buckets.map(function (p) {
           return Math.max(0, Math.round(p.value || 0));
         });
@@ -791,6 +856,35 @@
             );
           })
           .join("");
+      }
+
+      function renderWeekOptions(options, appliedWeek) {
+        var select = document.getElementById("weekFilterSelect");
+        if (!select) return;
+        var opts = [{ value: "", label: "Overall (all weeks)" }];
+        if (options && options.length) {
+          opts = opts.concat(
+            options.map(function (opt) {
+              return {
+                value: String(opt.value),
+                label: opt.label || ("Week " + opt.value),
+              };
+            })
+          );
+        }
+        select.innerHTML = opts
+          .map(function (opt) {
+            return (
+              '<option value="' +
+              opt.value +
+              '">' +
+              opt.label +
+              "</option>"
+            );
+          })
+          .join("");
+        var val = appliedWeek == null ? "" : String(appliedWeek);
+        select.value = val;
       }
 
       function renderHistory(weeks) {
