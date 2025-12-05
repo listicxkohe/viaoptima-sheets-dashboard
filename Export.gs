@@ -13,48 +13,11 @@ function downloadScorecardPdf(transporterId, weekFilter) {
 }
 
 /**
- * Send a scorecard PDF via email.
- * Supports two modes:
- * 1) Payload with base64 snapshot from client (preferred for visual fidelity).
- * 2) Plain transporterId + weekFilter to generate server-side.
+ * Send a scorecard PDF via email using the generated layout (no snapshots).
  */
-function emailScorecardPdf(payloadOrId, weekFilter) {
-  var hasPayloadObject =
-    payloadOrId && typeof payloadOrId === "object" && !Array.isArray(payloadOrId);
-
-  var transporterId = hasPayloadObject
-    ? sanitizeTransporterId_(payloadOrId.transporterId)
-    : sanitizeTransporterId_(payloadOrId);
-  if (!transporterId) {
-    throw new Error("Transporter ID is required to email a scorecard.");
-  }
-
-  var week = normalizeWeekFilter_ ? normalizeWeekFilter_(weekFilter || (hasPayloadObject ? payloadOrId.weekFilter : null)) : null;
-  var data = getDriverScorecardData(transporterId, week);
-  if (!data || !data.driver) {
-    throw new Error("Unable to load scorecard data for " + transporterId + ".");
-  }
-
-  var blob;
-  var fileName;
-
-  if (hasPayloadObject && payloadOrId.base64) {
-    var base64 = String(payloadOrId.base64 || "");
-    var parts = base64.split(",");
-    if (parts.length > 1) {
-      base64 = parts[1];
-    }
-    if (!base64) {
-      throw new Error("PDF data missing; unable to send scorecard.");
-    }
-    fileName = payloadOrId.fileName || "scorecard.pdf";
-    var bytes = Utilities.base64Decode(base64);
-    blob = Utilities.newBlob(bytes, "application/pdf", fileName);
-  } else {
-    var pdf = generateScorecardPdf_(transporterId, week);
-    blob = pdf.blob;
-    fileName = pdf.fileName;
-  }
+function emailScorecardPdf(transporterId, weekFilter) {
+  var pdf = generateScorecardPdf_(transporterId, weekFilter);
+  var data = pdf.data;
 
   var weekLabel = buildScorecardWeekLabel_(data);
   var subject =
@@ -63,7 +26,7 @@ function emailScorecardPdf(payloadOrId, weekFilter) {
     " scorecard" +
     (weekLabel ? " - " + weekLabel : "");
 
-  var bodyHtml = buildSnapshotEmailHtml_(data, weekLabel, fileName);
+  var bodyHtml = buildSnapshotEmailHtml_(data, weekLabel, pdf.fileName);
   var bodyText = buildSnapshotEmailText_(data, weekLabel);
 
   var to = "kiragod00@gmail.com";
@@ -72,7 +35,7 @@ function emailScorecardPdf(payloadOrId, weekFilter) {
     subject: subject,
     body: bodyText,
     htmlBody: bodyHtml,
-    attachments: [blob],
+    attachments: [pdf.blob],
   });
 
   return { success: true, sentTo: to };
@@ -97,7 +60,6 @@ function generateScorecardPdf_(transporterId, weekFilter) {
   body.setMarginTop(18).setMarginBottom(18).setMarginLeft(24).setMarginRight(24);
 
   appendHeader_(body, data);
-  appendScorePanel_(body, data);
   appendMetricCards_(body, data);
   appendComparisonCards_(body, data);
 
@@ -366,6 +328,10 @@ function appendHeader_(body, data) {
   left.appendParagraph(
     "Weeks tracked: " + (driver.weeks != null ? driver.weeks : "N/A")
   );
+  var scopeLabel = data && data.appliedWeek != null
+    ? "Week " + data.appliedWeek
+    : "Overall (all weeks)";
+  left.appendParagraph("Scope: " + scopeLabel).setForegroundColor("#475569");
   var right = row.appendTableCell();
   right.setPaddingTop(12).setPaddingBottom(12).setPaddingLeft(14).setPaddingRight(14);
   right.setBackgroundColor("#f1f5f9");
@@ -374,25 +340,6 @@ function appendHeader_(body, data) {
   var scoreVal = right.appendParagraph(driver.score != null ? driver.score.toFixed(1) : "N/A");
   scoreVal.setBold(true).setFontSize(32).setForegroundColor("#111827");
   right.appendParagraph(driver.teamStanding || "").setForegroundColor("#475569");
-}
-
-// Highlight score + rank in its own panel.
-function appendScorePanel_(body, data) {
-  var table = body.appendTable();
-  table.setBorderWidth(0);
-  var row = table.appendTableRow();
-  var cell = row.appendTableCell();
-  cell.setBackgroundColor("#e2e8f0");
-  cell.setPaddingTop(12).setPaddingBottom(12).setPaddingLeft(14).setPaddingRight(14);
-  var driver = data.driver || {};
-  var rankText = driver.rank != null ? "Rank #" + driver.rank : "Unranked";
-  var totalText = driver.totalDrivers ? " of " + driver.totalDrivers : "";
-  cell.appendParagraph("Score").setBold(true).setForegroundColor("#475569");
-  var scoreVal = cell.appendParagraph(
-    driver.score != null ? driver.score.toFixed(1) : "N/A"
-  );
-  scoreVal.setBold(true).setFontSize(30).setForegroundColor("#0f172a");
-  cell.appendParagraph(rankText + totalText).setForegroundColor("#475569");
 }
 
 function appendMetricCards_(body, data) {

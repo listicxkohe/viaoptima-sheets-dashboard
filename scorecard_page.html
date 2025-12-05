@@ -305,8 +305,6 @@
     </div>
 
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
     <script>
       const SCORECARD_TRANSPORTER_ID = <?!= JSON.stringify(transporterId || "") ?>;
       const INITIAL_DRIVER_NAME = <?!= JSON.stringify(driverName || "") ?>;
@@ -412,24 +410,12 @@
         }
         try {
           showError("");
-          setLoading(true, "Rendering & emailing PDF...");
-          var snap = await renderScorecardSnapshot();
-          var dataUri = snap.pdf.output("datauristring");
-          var parts = dataUri.split(",");
-          if (!parts || parts.length < 2) {
-            throw new Error("Unable to build PDF data.");
-          }
-          var base64 = parts[1];
+          setLoading(true, "Emailing PDF...");
           await new Promise(function (resolve, reject) {
             google.script.run
               .withSuccessHandler(resolve)
               .withFailureHandler(reject)
-              .emailScorecardPdf({
-                transporterId: SCORECARD_TRANSPORTER_ID,
-                weekFilter: activeWeekFilter,
-                fileName: snap.fileName,
-                base64: base64,
-              });
+              .emailScorecardPdf(SCORECARD_TRANSPORTER_ID, activeWeekFilter);
           });
           alert("Scorecard emailed successfully.");
         } catch (err) {
@@ -446,53 +432,38 @@
           showError("Transporter ID missing; cannot export PDF.");
           return;
         }
-        setLoading(true, "Rendering PDF...");
+        setLoading(true, "Generating PDF...");
         showError("");
-        renderScorecardSnapshot()
-          .then(function (snap) {
-            snap.pdf.save(snap.fileName);
-          })
-          .catch(function (err) {
-            showError(err && err.message ? err.message : "Failed to render PDF.");
-          })
-          .finally(function () {
+        google.script.run
+          .withSuccessHandler(function (result) {
             setLoading(false);
-          });
+            if (!result || !result.base64) {
+              showError("No PDF returned from server.");
+              return;
+            }
+            downloadBase64Pdf(result.fileName || "scorecard.pdf", result.base64);
+          })
+          .withFailureHandler(function (err) {
+            setLoading(false);
+            showError(
+              err && err.message ? err.message : "Failed to generate PDF."
+            );
+          })
+          .downloadScorecardPdf(SCORECARD_TRANSPORTER_ID, activeWeekFilter);
       }
 
-      async function renderScorecardSnapshot() {
-        var shell = document.querySelector(".scorecard-shell");
-        if (!shell) {
-          throw new Error("Scorecard container not found.");
+      function downloadBase64Pdf(fileName, base64) {
+        try {
+          var linkSource = "data:application/pdf;base64," + base64;
+          var downloadLink = document.createElement("a");
+          downloadLink.href = linkSource;
+          downloadLink.download = fileName || "scorecard.pdf";
+          document.body.appendChild(downloadLink);
+          downloadLink.click();
+          document.body.removeChild(downloadLink);
+        } catch (err) {
+          showError("Unable to trigger download: " + (err && err.message ? err.message : ""));
         }
-        window.scrollTo(0, 0);
-        var overlay = document.getElementById("loadingOverlay");
-        var priorOverlayDisplay = overlay ? overlay.style.display : null;
-        if (overlay) overlay.style.display = "none";
-        var renderPromise = html2canvas(shell, {
-          scale: 1.25, // keep payload smaller for emailing
-          useCORS: true,
-          ignoreElements: function (el) {
-            if (el && el.id === "loadingOverlay") return true;
-            return el && el.classList && el.classList.contains("no-export");
-          },
-        });
-        var timeoutPromise = new Promise(function (_resolve, reject) {
-          setTimeout(function () {
-            reject(new Error("Rendering timed out. Try again or reduce page size."));
-          }, 20000);
-        });
-        var canvas = await Promise.race([renderPromise, timeoutPromise]);
-        if (overlay && priorOverlayDisplay !== null) {
-          overlay.style.display = priorOverlayDisplay;
-        }
-        var imgData = canvas.toDataURL("image/jpeg", 0.82);
-        var pdf = new jspdf.jsPDF("p", "px", [canvas.width, canvas.height]);
-        pdf.addImage(imgData, "JPEG", 0, 0, canvas.width, canvas.height);
-        var fileName =
-          (document.getElementById("driverName").textContent || "driver_scorecard") +
-          ".pdf";
-        return { pdf: pdf, fileName: fileName };
       }
 
       function renderScorecard(data) {

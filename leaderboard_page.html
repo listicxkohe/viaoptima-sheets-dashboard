@@ -249,6 +249,36 @@
         color: #9ca3af;
         margin-top: 6px;
       }
+      .overlay {
+        position: fixed;
+        inset: 0;
+        background: rgba(15, 23, 42, 0.35);
+        display: none;
+        align-items: center;
+        justify-content: center;
+        z-index: 2000;
+      }
+      .overlay-card {
+        background: #fff;
+        border-radius: 12px;
+        padding: 16px;
+        width: 360px;
+        box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+        font-size: 13px;
+      }
+      .progress-bar {
+        height: 8px;
+        background: #e5e7eb;
+        border-radius: 999px;
+        overflow: hidden;
+        margin: 8px 0 12px;
+      }
+      .progress-bar-inner {
+        height: 100%;
+        width: 0;
+        background: linear-gradient(90deg, #2563eb, #22c55e);
+        transition: width 0.2s ease;
+      }
     </style>
   </head>
   <body>
@@ -304,6 +334,8 @@
           </div>
         </div>
         <div class="toolbar-right">
+          <button class="btn btn-ghost" id="btnEmailSelected" disabled>Email selected</button>
+          <button class="btn btn-ghost" id="btnEmailAll">Email all (with email)</button>
           <button class="btn btn-ghost" id="btnRefresh">Refresh</button>
         </div>
     </div>
@@ -312,6 +344,7 @@
         <table>
           <thead>
             <tr>
+              <th style="width:36px;"><input type="checkbox" id="selectAll"></th>
               <th class="sortable" data-field="rank" title="Sort by current rank. Rank change compares to prior week when a week is selected."><span>Rank</span></th>
               <th title="Driver name from masterlist or scorecard data.">Driver</th>
               <th title="Transporter ID from weekly scoreboard.">Transporter ID</th>
@@ -360,6 +393,18 @@
       <div class="status-text" id="statusText"></div>
     </div>
 
+    <div class="overlay" id="emailOverlay">
+      <div class="overlay-card">
+        <div style="font-weight:600; margin-bottom:6px;" id="emailStatusTitle">Sending emails...</div>
+        <div class="progress-bar"><div class="progress-bar-inner" id="emailProgress"></div></div>
+        <div id="emailStatusDetail" style="color:#4b5563; margin-bottom:8px;">Starting...</div>
+        <div id="emailStatusErrors" style="color:#b91c1c; font-size:12px; max-height:120px; overflow:auto;"></div>
+        <div style="margin-top:10px; text-align:right;">
+          <button class="btn btn-ghost" id="btnCloseEmailOverlay">Close</button>
+        </div>
+      </div>
+    </div>
+
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
     <script>
       let allRows = [];
@@ -371,6 +416,8 @@
       let viewMode = 'list';
       let distChart = null;
       let distribution = null;
+      let distributionHistory = [];
+      let selectedIds = new Set();
 
       function setStatus(msg) {
         document.getElementById('statusText').textContent = msg || '';
@@ -402,6 +449,7 @@
             selectedWeek = data.appliedWeek != null ? data.appliedWeek : null;
             buildWeekSelect();
             distribution = data.distribution || null;
+            distributionHistory = data.distributionHistory || [];
 
             // Summary
             const s = data.summary || {};
@@ -544,6 +592,7 @@
         }
 
         const rowsHtml = filteredRows.map(row => {
+          const isChecked = selectedIds.has(row.transporterId);
           const rank = row.rank;
           let rankClass = 'rank-normal';
           let rankLabel = rank != null ? String(rank) : '-';
@@ -570,6 +619,7 @@
 
           return `
             <tr>
+              <td><input type="checkbox" class="row-select" data-id="${row.transporterId}" ${isChecked ? 'checked' : ''}></td>
               <td>
                 ${rank != null
                   ? `<div class="rank-pill ${rankClass}">${rankLabel}</div>`
@@ -597,12 +647,27 @@
             openScorecard(this.getAttribute('data-id'), driverName, this);
           });
         }
+        var checkboxes = tb.querySelectorAll('.row-select');
+        for (var c = 0; c < checkboxes.length; c++) {
+          checkboxes[c].addEventListener('change', function () {
+            var id = this.getAttribute('data-id');
+            if (this.checked) {
+              selectedIds.add(id);
+            } else {
+              selectedIds.delete(id);
+            }
+            syncSelectAllState();
+            updateEmailButtons();
+          });
+        }
+        syncSelectAllState();
+        updateEmailButtons();
       }
 
       function formatRankDelta(change) {
         if (change == null) return '';
         var cls = change > 0 ? 'up' : change < 0 ? 'down' : 'flat';
-        var arrow = change > 0 ? '▲' : change < 0 ? '▼' : '→';
+        var arrow = change > 0 ? '\u25B2' : change < 0 ? '\u25BC' : '\u2192';
         return `<span class="rank-delta ${cls}" title="Change vs prior week">${arrow} ${Math.abs(change)}</span>`;
       }
 
@@ -615,6 +680,7 @@
         var stats = distribution.stats || {};
         var bucketSize = distribution.bucketSize || 1;
         var bucketDrivers = distribution.bucketDrivers || [];
+        var ghosts = distributionHistory || [];
 
         if (!buckets.length) {
           if (distChart) distChart.destroy();
@@ -625,11 +691,46 @@
           empty.style.display = 'none';
           canvas.style.display = 'block';
           var maxCount = buckets.reduce(function(m, b) { return Math.max(m, b.count || 0); }, 0);
-          var curve = buildNormalCurve(buckets, stats, maxCount, bucketSize);
+          var curve = (distribution.curvePoints && distribution.curvePoints.length)
+            ? distribution.curvePoints
+            : buildSmoothedCurve(smoothed);
           var maxCurveY = curve.reduce(function(m, p) { return Math.max(m, p.y); }, 0);
-          var yMax = Math.max(maxCount, maxCurveY) * 1.2;
-          var xMin = distribution.minScore != null ? Math.floor(distribution.minScore - 2) : undefined;
-          var xMax = distribution.maxScore != null ? Math.ceil(distribution.maxScore + 2) : undefined;
+          var ghostCurves = ghosts.map(function(g) {
+            var pts = (g.curvePoints && g.curvePoints.length) ? g.curvePoints : (g.smoothed || []);
+            return {
+              label: g.label || ('Week ' + g.week),
+              data: pts.map(function(p) { return { x: p.x, y: p.y }; }),
+              minScore: g.minScore,
+              maxScore: g.maxScore
+            };
+          });
+          var ghostMaxY = ghostCurves.reduce(function(m, g) {
+            var local = g.data.reduce(function(mm, p) { return Math.max(mm, p.y); }, 0);
+            return Math.max(m, local);
+          }, 0);
+          var yMax = Math.max(maxCount, maxCurveY, ghostMaxY) * 1.2;
+          function addRangeFromPoints(arr, range) {
+            if (!arr || !arr.length) return range;
+            var xmin = Math.min.apply(null, arr.map(function(p){ return p.x; }));
+            var xmax = Math.max.apply(null, arr.map(function(p){ return p.x; }));
+            range.min = range.min == null ? xmin : Math.min(range.min, xmin);
+            range.max = range.max == null ? xmax : Math.max(range.max, xmax);
+            return range;
+          }
+          var range = {
+            min: distribution.minScore != null ? Math.floor(distribution.minScore - 2) : null,
+            max: distribution.maxScore != null ? Math.ceil(distribution.maxScore + 2) : null
+          };
+          addRangeFromPoints(curve, range);
+          ghostCurves.forEach(function (g) {
+            if (g.minScore != null) range.min = range.min == null ? Math.floor(g.minScore - 2) : Math.min(range.min, Math.floor(g.minScore - 2));
+            if (g.maxScore != null) range.max = range.max == null ? Math.ceil(g.maxScore + 2) : Math.max(range.max, Math.ceil(g.maxScore + 2));
+            addRangeFromPoints(g.data, range);
+          });
+          var xMin = range.min;
+          var xMax = range.max;
+          var ghostPalette = ['#3b82f620', '#0ea5e920', '#6366f120', '#8b5cf620'];
+          var ghostStroke = ['#3b82f6', '#0ea5e9', '#6366f1', '#8b5cf6'];
           if (distChart) distChart.destroy();
           distChart = new Chart(canvas.getContext('2d'), {
             type: 'bar',
@@ -647,7 +748,23 @@
                   parsing: false,
                   barPercentage: 0.9,
                   categoryPercentage: 0.9,
-                },
+                }
+              ].concat(
+                ghostCurves.map(function(gc, idx) {
+                  return {
+                    type: 'line',
+                    label: gc.label + ' (trend)',
+                    data: gc.data,
+                    tension: 0.35,
+                    borderColor: ghostStroke[idx % ghostStroke.length],
+                    backgroundColor: ghostPalette[idx % ghostPalette.length],
+                    pointRadius: 0,
+                    yAxisID: 'y',
+                    parsing: false,
+                    borderDash: [6, 4],
+                  };
+                })
+              ).concat([
                 {
                   type: 'line',
                   label: 'Bell curve (scaled)',
@@ -663,7 +780,7 @@
                 buildMarkerLine('Median', stats.median, '#10b981', yMax),
                 buildMarkerLine('P90', stats.p90, '#f59e0b', yMax),
                 buildMarkerLine('P95', stats.p95, '#ef4444', yMax),
-              ],
+              ]),
             },
             options: {
               responsive: true,
@@ -727,31 +844,23 @@
       }
 
       function buildNormalCurve(buckets, stats, maxCount, bucketSize) {
-        if (!buckets.length || !stats || stats.stddev == null || stats.stddev === 0) return [];
-        var minX = Math.min.apply(null, buckets.map(function(b) { return b.from; }));
-        var maxX = Math.max.apply(null, buckets.map(function(b) { return b.to; }));
-        var steps = 40;
-        var points = [];
-        var mean = stats.mean;
-        var sd = stats.stddev || 1;
-        // Gaussian density
-        function gaussian(x) {
-          var coeff = 1 / (sd * Math.sqrt(2 * Math.PI));
-          var exponent = -((x - mean) * (x - mean)) / (2 * sd * sd);
-          return coeff * Math.exp(exponent);
+        return buildSmoothedCurve(buckets && buckets.length ? buckets.map(function(b) {
+          return { x: (b.from + b.to) / 2, y: b.count };
+        }) : []);
+      }
+
+      function buildSmoothedCurve(points) {
+        if (!points || !points.length) return [];
+        var smooth = [];
+        for (var i = 0; i < points.length; i++) {
+          var prev = points[i - 1] || points[i];
+          var next = points[i + 1] || points[i];
+          smooth.push({
+            x: points[i].x,
+            y: (prev.y + points[i].y + next.y) / 3
+          });
         }
-        // Scale density to approximate counts
-        var sampleMax = 0;
-        for (var i = 0; i <= steps; i++) {
-          var x = minX + (i / steps) * (maxX - minX);
-          sampleMax = Math.max(sampleMax, gaussian(x));
-        }
-        var scale = sampleMax ? maxCount / sampleMax : 1;
-        for (var j = 0; j <= steps; j++) {
-          var xx = minX + (j / steps) * (maxX - minX);
-          points.push({ x: xx, y: gaussian(xx) * scale });
-        }
-        return points;
+        return smooth;
       }
 
       function buildMarkerLine(label, value, color, yMax) {
@@ -772,12 +881,91 @@
         };
       }
 
+      function sendEmails(idList) {
+        if (!idList) idList = [];
+        showEmailOverlay('Sending emails...', 0, '', []);
+        setStatus('Sending emails...');
+        google.script.run
+          .withSuccessHandler(function (res) {
+            var total = (res && res.totalRequested) || idList.length || 0;
+            var sent = (res && res.totalSent) || 0;
+            var errors = (res && res.errors) || [];
+            var skips = (res && res.skipped) || [];
+            var msg = 'Sent ' + sent + ' of ' + total;
+            setStatus(msg);
+            var errorList = errors.concat(skips || []);
+            showEmailOverlay('Email results', total ? Math.round((sent / total) * 100) : 0, msg, errorList);
+          })
+          .withFailureHandler(function (err) {
+            var m = err && err.message ? err.message : err;
+            setStatus('Email failed: ' + m);
+            showEmailOverlay('Email failed', 0, m, [{ reason: m }]);
+          })
+          .sendLeaderboardEmails(idList || [], { week: selectedWeek });
+      }
+
+      function showEmailOverlay(title, percent, detail, errors) {
+        var overlay = document.getElementById('emailOverlay');
+        var bar = document.getElementById('emailProgress');
+        var detailEl = document.getElementById('emailStatusDetail');
+        var titleEl = document.getElementById('emailStatusTitle');
+        var errorsEl = document.getElementById('emailStatusErrors');
+        if (!overlay || !bar || !detailEl || !titleEl || !errorsEl) return;
+        overlay.style.display = 'flex';
+        titleEl.textContent = title || 'Status';
+        bar.style.width = Math.max(0, Math.min(100, percent || 0)) + '%';
+        detailEl.textContent = detail || '';
+        if (errors && errors.length) {
+          var list = errors.map(function (e) {
+            var id = e.id ? ('[' + e.id + '] ') : '';
+            var email = e.email ? ('(' + e.email + ') ') : '';
+            var reason = e.reason || 'Unknown reason';
+            return '<div>- ' + id + email + reason + '</div>';
+          }).join('');
+          errorsEl.innerHTML = list;
+        } else {
+          errorsEl.innerHTML = '';
+        }
+      }
+
+      function hideEmailOverlay() {
+        var overlay = document.getElementById('emailOverlay');
+        if (overlay) overlay.style.display = 'none';
+      }
+
+      function syncSelectAllState() {
+        var selectAll = document.getElementById('selectAll');
+        if (!selectAll) return;
+        var total = filteredRows.length;
+        var selected = 0;
+        filteredRows.forEach(function (r) {
+          if (selectedIds.has(r.transporterId)) selected++;
+        });
+        selectAll.checked = total > 0 && selected === total;
+        selectAll.indeterminate = selected > 0 && selected < total;
+      }
+
+      function updateEmailButtons() {
+        var btn = document.getElementById('btnEmailSelected');
+        if (!btn) return;
+        btn.disabled = selectedIds.size === 0;
+      }
+
       // Wire up events
       document.addEventListener('DOMContentLoaded', function () {
         fetchLeaderboard();
 
         document.getElementById('btnRefresh').addEventListener('click', function () {
           fetchLeaderboard();
+        });
+        document.getElementById('btnEmailSelected').addEventListener('click', function () {
+          sendEmails(Array.from(selectedIds));
+        });
+        document.getElementById('btnEmailAll').addEventListener('click', function () {
+          sendEmails([]);
+        });
+        document.getElementById('btnCloseEmailOverlay').addEventListener('click', function () {
+          hideEmailOverlay();
         });
 
         const weekSelect = document.getElementById('weekSelect');
@@ -786,6 +974,17 @@
             const val = this.value;
             selectedWeek = val === '' ? null : parseInt(val, 10);
             fetchLeaderboard(selectedWeek);
+          });
+        }
+        const selectAll = document.getElementById('selectAll');
+        if (selectAll) {
+          selectAll.addEventListener('change', function () {
+            if (this.checked) {
+              filteredRows.forEach(function (r) { selectedIds.add(r.transporterId); });
+            } else {
+              filteredRows.forEach(function (r) { selectedIds.delete(r.transporterId); });
+            }
+            renderTable();
           });
         }
 
@@ -820,3 +1019,5 @@
     </script>
   </body>
 </html>
+
+

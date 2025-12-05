@@ -17,6 +17,77 @@ var LB_KEYS = {
 var LB_PROP_KEY = "leaderboardConfig_v1";
 
 /************************************************
+ * SHARED HELPERS (define once if missing)
+ ************************************************/
+// Round a number to one decimal place (fallback if not defined elsewhere).
+if (typeof roundToOne_ !== "function") {
+  function roundToOne_(n) {
+    var num = Number(n);
+    if (!isFinite(num)) return null;
+    return Math.round(num * 10) / 10;
+  }
+}
+
+// Safe date parser; defines parseDateCell_ if missing to avoid ReferenceErrors.
+if (typeof parseDateCell_ !== "function") {
+  function parseDateCell_(value) {
+    return parseDateCellFallback_(value);
+  }
+}
+function parseDateCellSafe_(cell) {
+  if (typeof parseDateCell_ === "function") {
+    try {
+      return parseDateCell_(cell);
+    } catch (e) {
+      // fall through to fallback
+    }
+  }
+  return parseDateCellFallback_(cell);
+}
+function parseDateCellFallback_(cell) {
+  if (cell instanceof Date) {
+    return new Date(cell.getTime());
+  }
+  if (typeof cell === "number" && isFinite(cell)) {
+    // Sheets serial date (days since 1899-12-30)
+    var epoch = new Date(Date.UTC(1899, 11, 30));
+    var ms = cell * 24 * 60 * 60 * 1000;
+    return new Date(epoch.getTime() + ms);
+  }
+  if (cell && typeof cell === "string") {
+    var d = new Date(cell);
+    if (!isNaN(d.getTime())) return d;
+  }
+  return null;
+}
+
+/**
+ * Build a Gaussian curve scaled to histogram counts.
+ * y is scaled so that the area under the curve approximates total samples.
+ */
+function buildGaussianCurve_(scores, stats, bucketSize, minScore, maxScore) {
+  if (!stats || stats.stddev == null || stats.stddev === 0 || !scores || !scores.length) return [];
+  var mean = (typeof stats.meanRaw === "number") ? stats.meanRaw : stats.mean;
+  var sd = (typeof stats.stddevRaw === "number") ? stats.stddevRaw : stats.stddev;
+  if (!sd || sd === 0) return [];
+  var n = scores.length;
+  var width = bucketSize && bucketSize > 0 ? bucketSize : Math.max(0.25, (maxScore - minScore) / 20 || 1);
+  var start = (typeof minScore === "number" ? minScore : Math.min.apply(null, scores)) - width;
+  var end = (typeof maxScore === "number" ? maxScore : Math.max.apply(null, scores)) + width;
+  var steps = 80;
+  var points = [];
+  var normCoef = 1 / (sd * Math.sqrt(2 * Math.PI));
+  var scale = n * width; // area ~ n
+  for (var i = 0; i <= steps; i++) {
+    var x = start + (i / steps) * (end - start);
+    var expPart = -((x - mean) * (x - mean)) / (2 * sd * sd);
+    var pdf = normCoef * Math.exp(expPart);
+    points.push({ x: x, y: pdf * scale });
+  }
+  return points;
+}
+
+/************************************************
  * PUBLIC API – CALLED FROM HTML / SIDEBAR
  ************************************************/
 
@@ -106,13 +177,14 @@ function getLeaderboardData(weekFilter) {
   /********** MASTERLIST – DRIVER LIST + NAME→ID MAP **********/
   var mLast = masterSheet.getLastRow();
   var masterVals =
-    mLast > 1 ? masterSheet.getRange(2, 1, mLast - 1, 6).getValues() : [];
+    mLast > 1 ? masterSheet.getRange(2, 1, mLast - 1, 7).getValues() : [];
 
   // masterlist layout:
   // A: Transporter ID
   // B: First Name
   // C: Last Name
   // F: Status (Active / Inactive)
+  // G: Email
   var drivers = [];
   var nameToIds = {}; // "firstname lastname".toLowerCase() -> [transporterIds]
 
@@ -122,6 +194,7 @@ function getLeaderboardData(weekFilter) {
     var first = String(row[1] || "").trim();
     var last = String(row[2] || "").trim();
     var status = String(row[5] || "").trim(); // F
+    var email = String(row[6] || "").trim(); // G
 
     var name = (first + " " + last).trim();
     if (!name) name = "(Unnamed driver " + (i + 2) + ")";
@@ -130,6 +203,7 @@ function getLeaderboardData(weekFilter) {
       id: trId || null,
       name: name,
       status: status || "",
+      email: email || "",
     });
 
     if (trId) {
@@ -237,7 +311,7 @@ function getLeaderboardData(weekFilter) {
         var cRow = cVals[j];
         var routeTid = String(cRow[3] || "").trim(); // D = transporter ID
         var rescuedByRaw = String(cRow[12] || "").trim(); // M = "Rescued by"
-        var routeDate = parseDateCell_ ? parseDateCell_(cRow[1]) : null; // B = Date
+        var routeDate = parseDateCellSafe_(cRow[1]); // B = Date
 
         if (routeWindow && (!routeDate || routeDate < routeWindow.start || routeDate > routeWindow.end)) {
           continue;
@@ -351,6 +425,7 @@ function getLeaderboardData(weekFilter) {
       name: drv.name,
       transporterId: id || "",
       status: drv.status || "",
+      email: drv.email || "",
       weeks: weeks,
       deliveries: deliveries,
       dcr: dcrAvg != null ? roundPct_(dcrAvg) : null,
@@ -415,6 +490,15 @@ function getLeaderboardData(weekFilter) {
     weekOptions: [{ value: null, label: "Overall (all weeks)" }].concat(weekOptions),
     appliedWeek: selectedWeek,
     distribution: buildDistribution_(rows),
+    distributionHistory: buildDistributionHistory_(
+      selectedWeek,
+      weekOptions,
+      scoreVals,
+      cfg,
+      nameToIds,
+      completeSheet,
+      tz
+    ),
   };
 
   return result;
@@ -579,7 +663,7 @@ function buildWeekOptions_(scoreVals, tz) {
     if (wk === "" || wk == null) continue;
     var weekNum = Number(wk);
     if (!isFinite(weekNum)) continue;
-    var weDate = typeof parseDateCell_ === "function" ? parseDateCell_(row[1]) : null;
+    var weDate = parseDateCellSafe_(row[1]);
     var labelDate =
       weDate && !isNaN(weDate.getTime())
         ? Utilities.formatDate(weDate, tz, "d MMM yyyy")
@@ -610,7 +694,7 @@ function findWeekDateWindow_(weekNum, scoreVals, tz) {
   for (var i = 0; i < scoreVals.length; i++) {
     var row = scoreVals[i];
     if (Number(row[0]) === weekNum) {
-      var d = typeof parseDateCell_ === "function" ? parseDateCell_(row[1]) : null;
+      var d = parseDateCellSafe_(row[1]);
       if (d && !isNaN(d.getTime())) {
         target = d;
         break;
@@ -690,7 +774,7 @@ function computeRanksForWeek_(weekNum, scoreVals, cfg, nameToIds, completeSheet,
         var cRow = cVals[j];
         var routeTid = String(cRow[3] || "").trim(); // D
         var rescuedByRaw = String(cRow[12] || "").trim(); // M
-        var routeDate = parseDateCell_(cRow[1]);
+        var routeDate = parseDateCellSafe_(cRow[1]);
         if (!routeDate || routeDate < routeWindow.start || routeDate > routeWindow.end) continue;
         if (!routeTid && !rescuedByRaw) continue;
         if (routeTid && !rescueById[routeTid]) rescueById[routeTid] = { given: 0, taken: 0 };
@@ -752,6 +836,77 @@ function computeRanksForWeek_(weekNum, scoreVals, cfg, nameToIds, completeSheet,
   return ranks;
 }
 
+/**
+ * Send scorecard PDFs for a list of transporter IDs.
+ * If ids is empty/null, send for all drivers with email addresses.
+ */
+function sendLeaderboardEmails(ids, options) {
+  options = options || {};
+  ids = ids || [];
+  var weekFilter = options.week != null ? options.week : null;
+  var scopeLabel = weekFilter != null ? "Week " + weekFilter : "Overall";
+  var subject = options.subject || ("Driver scorecard - " + scopeLabel);
+  var body = options.body || "Please find attached the latest driver scorecard.";
+
+  var data = getLeaderboardData(weekFilter);
+  var rows = (data && data.rows) || [];
+  var targetIds;
+  if (!ids.length) {
+    targetIds = rows
+      .filter(function (r) { return r.email; })
+      .map(function (r) { return r.transporterId; });
+  } else {
+    var set = {};
+    ids.forEach(function (id) { if (id) set[id] = true; });
+    targetIds = rows
+      .filter(function (r) { return set[r.transporterId]; })
+      .map(function (r) { return r.transporterId; });
+  }
+
+  var sent = [];
+  var skipped = [];
+  var errors = [];
+
+  for (var i = 0; i < targetIds.length; i++) {
+    var tid = targetIds[i];
+    var row = rows.find(function (r) { return r.transporterId === tid; });
+    if (!row || !row.email) {
+      skipped.push({ id: tid, reason: "No email" });
+      continue;
+    }
+    try {
+      var pdf = downloadScorecardPdf(tid, weekFilter);
+      if (!pdf || !pdf.base64) {
+        errors.push({ id: tid, email: row.email, reason: "PDF generation failed" });
+        continue;
+      }
+      var blob = Utilities.newBlob(
+        Utilities.base64Decode(pdf.base64),
+        pdf.mimeType || "application/pdf",
+        pdf.fileName || ("scorecard_" + tid + ".pdf")
+      );
+      // Use MailApp to avoid Gmail-specific scopes.
+      MailApp.sendEmail({
+        to: row.email,
+        subject: subject,
+        body: body,
+        attachments: [blob],
+      });
+      sent.push({ id: tid, email: row.email });
+    } catch (err) {
+      errors.push({ id: tid, email: row.email, reason: err && err.message ? err.message : String(err) });
+    }
+  }
+
+  return {
+    sent: sent,
+    skipped: skipped,
+    errors: errors,
+    totalRequested: targetIds.length,
+    totalSent: sent.length,
+  };
+}
+
 function buildDistribution_(rows) {
   rows = rows || [];
   var scores = [];
@@ -786,6 +941,7 @@ function buildDistribution_(rows) {
   scores.sort(function (a, b) { return a - b; });
   var stats = computeStats_(scores);
   var histogram = computeHistogram_(scores, stats, rows);
+  var curvePoints = buildGaussianCurve_(scores, stats, histogram.bucketSize, histogram.minScore, histogram.maxScore);
 
   return {
     buckets: histogram.buckets,
@@ -795,7 +951,223 @@ function buildDistribution_(rows) {
     bucketDrivers: histogram.bucketDrivers,
     minScore: histogram.minScore,
     maxScore: histogram.maxScore,
+    curvePoints: curvePoints,
   };
+}
+
+/**
+ * Build distribution history (ghost lines) for recent weeks to overlay on the chart.
+ * Uses the last 3 weeks prior to the selected one (or last 3 available if none selected).
+ */
+function buildDistributionHistory_(selectedWeek, weekOptions, scoreVals, cfg, nameToIds, completeSheet, tz) {
+  var weeks = [];
+  var weekValues = [];
+  (weekOptions || []).forEach(function (opt) {
+    if (opt && opt.value != null) weekValues.push(opt.value);
+  });
+  if (!weekValues.length) return [];
+
+  if (selectedWeek != null) {
+    var idx = weekValues.indexOf(selectedWeek);
+    var start = idx >= 0 ? idx + 1 : 0; // weeks after selected are older
+    weeks = weekValues.slice(start, start + 3);
+  } else {
+    weeks = weekValues.slice(0, 3); // most recent weeks
+  }
+
+  var out = [];
+  for (var i = 0; i < weeks.length; i++) {
+    var wk = weeks[i];
+    var scores = computeScoresForWeek_(wk, scoreVals, cfg, nameToIds, completeSheet, tz);
+    var dist = buildDistributionFromScores_(scores);
+    if (dist) {
+      out.push({
+        week: wk,
+        label: findWeekLabel_(wk, weekOptions),
+        smoothed: dist.smoothed,
+        stats: dist.stats,
+        minScore: dist.minScore,
+        maxScore: dist.maxScore,
+        curvePoints: dist.curvePoints,
+      });
+    }
+  }
+  return out;
+}
+
+function findWeekLabel_(weekValue, weekOptions) {
+  for (var i = 0; i < (weekOptions || []).length; i++) {
+    if (weekOptions[i].value === weekValue) {
+      return weekOptions[i].label || ("Week " + weekValue);
+    }
+  }
+  return "Week " + weekValue;
+}
+
+function buildDistributionFromScores_(scores) {
+  if (!scores || !scores.length) return null;
+  var sorted = scores.slice().sort(function (a, b) { return a - b; });
+  var stats = computeStats_(sorted);
+  var histogram = computeHistogramFromScores_(sorted, stats);
+  var curvePoints = buildGaussianCurve_(sorted, stats, histogram.bucketSize, histogram.minScore, histogram.maxScore);
+  return {
+    smoothed: histogram.smoothed,
+    stats: stats,
+    minScore: histogram.minScore,
+    maxScore: histogram.maxScore,
+    curvePoints: curvePoints,
+  };
+}
+
+/**
+ * Compute histogram and smoothed curve from plain score numbers (no driver rows).
+ */
+function computeHistogramFromScores_(scores, stats) {
+  if (!scores.length) return { buckets: [], smoothed: [], minScore: null, maxScore: null, bucketSize: null };
+  var min = scores[0];
+  var max = scores[scores.length - 1];
+  var range = Math.max(1, max - min);
+  var targetBuckets = Math.min(24, Math.max(12, Math.ceil(range / 2)));
+  var bucketSize = Math.max(0.25, range / targetBuckets);
+  var bucketsCount = Math.ceil(range / bucketSize) + 1;
+  var buckets = [];
+  for (var i = 0; i < bucketsCount; i++) {
+    var start = min + i * bucketSize;
+    var end = start + bucketSize;
+    buckets.push({ from: start, to: end, count: 0 });
+  }
+  for (var j = 0; j < scores.length; j++) {
+    var s = scores[j];
+    var idx = Math.floor((s - min) / bucketSize);
+    idx = Math.max(0, Math.min(idx, buckets.length - 1));
+    buckets[idx].count++;
+  }
+  var smoothed = [];
+  var window = 2;
+  for (var k = 0; k < buckets.length; k++) {
+    var startWin = Math.max(0, k - window);
+    var endWin = Math.min(buckets.length - 1, k + window);
+    var total = 0;
+    var c = 0;
+    for (var t = startWin; t <= endWin; t++) {
+      total += buckets[t].count;
+      c++;
+    }
+    smoothed.push({ x: (buckets[k].from + buckets[k].to) / 2, y: c ? total / c : 0 });
+  }
+  return {
+    buckets: buckets,
+    smoothed: smoothed,
+    minScore: min,
+    maxScore: max,
+    bucketSize: bucketSize,
+  };
+}
+
+/**
+ * Compute score numbers for a specific week to use in ghost distributions.
+ */
+function computeScoresForWeek_(weekNum, scoreVals, cfg, nameToIds, completeSheet, tz) {
+  if (weekNum == null) return [];
+  var statsById = {};
+  for (var i = 0; i < scoreVals.length; i++) {
+    var row = scoreVals[i];
+    var wk = row[0];
+    if (wk !== weekNum) continue;
+    var id = String(row[5] || "").trim();
+    if (!id) continue;
+    var delivered = Number(row[6]) || 0;
+    var dcrP = parsePercent_(row[7]);
+    var podP = parsePercent_(row[9]);
+    var ccP = parsePercent_(row[10]);
+    if (!statsById[id]) {
+      statsById[id] = {
+        deliveries: 0,
+        weeksSet: {},
+        dcrSum: 0,
+        dcrCount: 0,
+        podSum: 0,
+        podCount: 0,
+        ccSum: 0,
+        ccCount: 0,
+        rescuesGiven: 0,
+        rescuesTaken: 0,
+      };
+    }
+    var s = statsById[id];
+    s.deliveries += delivered;
+    s.weeksSet[String(wk)] = true;
+    if (dcrP != null) {
+      s.dcrSum += dcrP;
+      s.dcrCount++;
+    }
+    if (podP != null) {
+      s.podSum += podP;
+      s.podCount++;
+    }
+    if (ccP != null) {
+      s.ccSum += ccP;
+      s.ccCount++;
+    }
+  }
+
+  // Rescues within the week window
+  var rescueById = {};
+  var routeWindow = findWeekDateWindow_(weekNum, scoreVals, tz);
+  if (completeSheet && routeWindow) {
+    var cLast = completeSheet.getLastRow();
+    if (cLast > 1) {
+      var cVals = completeSheet.getRange(2, 1, cLast - 1, 13).getValues();
+      for (var j = 0; j < cVals.length; j++) {
+        var cRow = cVals[j];
+        var routeTid = String(cRow[3] || "").trim(); // D
+        var rescuedByRaw = String(cRow[12] || "").trim(); // M
+        var routeDate = parseDateCellSafe_(cRow[1]);
+        if (!routeDate || routeDate < routeWindow.start || routeDate > routeWindow.end) continue;
+        if (!routeTid && !rescuedByRaw) continue;
+        if (routeTid && !rescueById[routeTid]) rescueById[routeTid] = { given: 0, taken: 0 };
+        if (routeTid && rescuedByRaw) rescueById[routeTid].taken++;
+        if (!rescuedByRaw) continue;
+        var parts = rescuedByRaw.split("|");
+        for (var k = 0; k < parts.length; k++) {
+          var name = String(parts[k] || "").trim();
+          if (!name) continue;
+          var key = name.toLowerCase();
+          var ids = nameToIds[key] || [];
+          for (var x = 0; x < ids.length; x++) {
+            var rid = ids[x];
+            if (!rid) continue;
+            if (!rescueById[rid]) rescueById[rid] = { given: 0, taken: 0 };
+            rescueById[rid].given++;
+          }
+        }
+      }
+    }
+  }
+
+  var scores = [];
+  Object.keys(statsById).forEach(function (idKey) {
+    var base = statsById[idKey];
+    var weeks = Object.keys(base.weeksSet).length;
+    var rescueStats = rescueById[idKey] || { given: 0, taken: 0 };
+    var dcrAvg = base.dcrCount ? base.dcrSum / base.dcrCount : null;
+    var podAvg = base.podCount ? base.podSum / base.podCount : null;
+    var ccAvg = base.ccCount ? base.ccSum / base.ccCount : null;
+    var score = computeScore_(
+      {
+        deliveries: base.deliveries,
+        weeks: weeks,
+        dcr: dcrAvg,
+        pod: podAvg,
+        cc: ccAvg,
+        rescuesGiven: rescueStats.given || 0,
+        rescuesTaken: rescueStats.taken || 0,
+      },
+      cfg
+    );
+    if (score != null && score === score) scores.push(score);
+  });
+  return scores;
 }
 
 function computeStats_(arr) {
@@ -817,6 +1189,9 @@ function computeStats_(arr) {
   var stddev = Math.sqrt(variance);
   return {
     count: n,
+    meanRaw: mean,
+    medianRaw: median,
+    stddevRaw: stddev,
     mean: roundToOne_(mean),
     median: roundToOne_(median),
     stddev: roundToOne_(stddev),
@@ -827,15 +1202,6 @@ function computeStats_(arr) {
     p90: roundToOne_(percentile_(arr, 0.9)),
     p95: roundToOne_(percentile_(arr, 0.95)),
   };
-}
-
-function percentile_(sortedArr, p) {
-  if (!sortedArr.length) return null;
-  var idx = (sortedArr.length - 1) * p;
-  var lower = Math.floor(idx);
-  var upper = Math.ceil(idx);
-  if (lower === upper) return sortedArr[lower];
-  return sortedArr[lower] + (sortedArr[upper] - sortedArr[lower]) * (idx - lower);
 }
 
 function computeHistogram_(scores, stats, rows) {
@@ -870,7 +1236,7 @@ function computeHistogram_(scores, stats, rows) {
   }
   // Simple smoothing (moving average over counts)
   var smoothed = [];
-  var window = 1;
+  var window = 2;
   for (var k = 0; k < buckets.length; k++) {
     var startWin = Math.max(0, k - window);
     var endWin = Math.min(buckets.length - 1, k + window);
