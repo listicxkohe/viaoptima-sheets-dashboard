@@ -151,18 +151,27 @@
         <div class="metric-card">
           <div class="metric-label">Avg DCR</div>
           <div class="metric-value" id="metricDcr">0%</div>
+          <div class="metric-sub" id="metricDcrRating"></div>
           <div class="metric-sub" id="metricDcrRank"></div>
           <div class="metric-trend" id="metricDcrTrend"></div>
         </div>
         <div class="metric-card">
+          <div class="metric-label">Avg DNR DPMO</div>
+          <div class="metric-value" id="metricDnr">0</div>
+          <div class="metric-sub" id="metricDnrRating"></div>
+          <div class="metric-trend" id="metricDnrTrend"></div>
+        </div>
+        <div class="metric-card">
           <div class="metric-label">Avg POD</div>
           <div class="metric-value" id="metricPod">0%</div>
+          <div class="metric-sub" id="metricPodRating"></div>
           <div class="metric-sub" id="metricPodRank"></div>
           <div class="metric-trend" id="metricPodTrend"></div>
         </div>
         <div class="metric-card">
           <div class="metric-label">Avg CC</div>
           <div class="metric-value" id="metricCc">0%</div>
+          <div class="metric-sub" id="metricCcRating"></div>
           <div class="metric-sub" id="metricCcRank"></div>
           <div class="metric-trend" id="metricCcTrend"></div>
         </div>
@@ -501,14 +510,20 @@
         var metrics = data.metrics || {};
         setText("metricDeliveries", formatNumber(metrics.deliveries || 0));
         setText("metricDcr", formatPercent(metrics.avgDcr));
+        setText("metricDcrRating", metrics.ratings ? (metrics.ratings.dcr || "") : "");
+        setText("metricDnr", metrics.avgDnrDpmo != null ? metrics.avgDnrDpmo.toFixed(1) : "N/A");
+        setText("metricDnrRating", metrics.ratings ? (metrics.ratings.dnr || "") : "");
         setText("metricPod", formatPercent(metrics.avgPod));
+        setText("metricPodRating", metrics.ratings ? (metrics.ratings.pod || "") : "");
         setText("metricCc", formatPercent(metrics.avgCc));
+        setText("metricCcRating", metrics.ratings ? (metrics.ratings.cc || "") : "");
         renderMetricRank("metricDeliveriesRank", data.metricRanks && data.metricRanks.deliveries);
         renderMetricRank("metricDcrRank", data.metricRanks && data.metricRanks.dcr);
         renderMetricRank("metricPodRank", data.metricRanks && data.metricRanks.pod);
         renderMetricRank("metricCcRank", data.metricRanks && data.metricRanks.cc);
         renderMetricTrend("metricDeliveriesTrend", data.metricTrends && data.metricTrends.deliveries, { percent: true, label: "vs last week" });
         renderMetricTrend("metricDcrTrend", data.metricTrends && data.metricTrends.dcr, { suffix: "pts" });
+        renderMetricTrend("metricDnrTrend", data.metricTrends && data.metricTrends.dnr, { suffix: " dpmo" });
         renderMetricTrend("metricPodTrend", data.metricTrends && data.metricTrends.pod, { suffix: "pts" });
         renderMetricTrend("metricCcTrend", data.metricTrends && data.metricTrends.cc, { suffix: "pts" });
 
@@ -1017,6 +1032,11 @@
       function formatPercent(value) {
         if (value === null || value === undefined || value === "") return "N/A";
         return Number(value).toFixed(1) + "%";
+      }
+
+      function formatDpmo(value) {
+        if (value === null || value === undefined || value === "") return "N/A";
+        return Number(value).toFixed(1);
       }
 
       function buildInitials(name) {

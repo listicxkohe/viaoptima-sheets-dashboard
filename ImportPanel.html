@@ -242,13 +242,18 @@
             Ranking weights <span class="pill">Config</span>
           </div>
           <div class="hint">
-            DCR/POD/CC weights are normalised inside the quality score. Other sliders are multipliers in the final formula.
+            DCR/POD/CC/DNR weights are normalised inside the quality score. Other sliders are multipliers in the final formula.
           </div>
 
           <div class="row">
             <label>DCR weight</label>
             <input type="range" id="wDcr" step="0.05" min="0" max="1" value="0.4" oninput="updateWeightLabel('Dcr')" />
             <span id="wDcrLabel" class="weightLabel">0.40</span>
+          </div>
+          <div class="row">
+            <label>DNR DPMO weight</label>
+            <input type="range" id="wDnr" step="0.05" min="0" max="1" value="0.15" oninput="updateWeightLabel('Dnr')" />
+            <span id="wDnrLabel" class="weightLabel">0.15</span>
           </div>
           <div class="row">
             <label>POD weight</label>
@@ -396,6 +401,7 @@
             cfg = cfg || {};
 
             var d = typeof cfg.dcrWeight === "number" ? cfg.dcrWeight : typeof cfg.weightDcr === "number" ? cfg.weightDcr : 0.4;
+            var dn = typeof cfg.dnrWeight === "number" ? cfg.dnrWeight : typeof cfg.weightDnr === "number" ? cfg.weightDnr : 0.15;
             var p = typeof cfg.podWeight === "number" ? cfg.podWeight : typeof cfg.weightPod === "number" ? cfg.weightPod : 0.4;
             var c = typeof cfg.ccWeight === "number" ? cfg.ccWeight : typeof cfg.weightCc === "number" ? cfg.weightCc : 0.2;
             var m = typeof cfg.minWeeks === "number" ? cfg.minWeeks : 1;
@@ -405,6 +411,7 @@
             var wResT = typeof cfg.rescuesTakenWeight === "number" ? cfg.rescuesTakenWeight : 1.0;
 
             document.getElementById("wDcr").value = d;
+            document.getElementById("wDnr").value = dn;
             document.getElementById("wPod").value = p;
             document.getElementById("wCc").value = c;
             document.getElementById("minWeeks").value = m;
@@ -414,6 +421,7 @@
             document.getElementById("wResTaken").value = wResT;
 
             updateWeightLabel("Dcr");
+            updateWeightLabel("Dnr");
             updateWeightLabel("Pod");
             updateWeightLabel("Cc");
             updateWeightLabel("Deliveries");
@@ -435,6 +443,7 @@
         var statusEl = document.getElementById("configStatus");
 
         var d = parseFloat(document.getElementById("wDcr").value) || 0;
+        var dn = parseFloat(document.getElementById("wDnr").value) || 0;
         var p = parseFloat(document.getElementById("wPod").value) || 0;
         var c = parseFloat(document.getElementById("wCc").value) || 0;
         var m = parseInt(document.getElementById("minWeeks").value, 10) || 1;
@@ -445,9 +454,11 @@
 
         var cfg = {
           dcrWeight: d,
+          dnrWeight: dn,
           podWeight: p,
           ccWeight: c,
           weightDcr: d,
+          weightDnr: dn,
           weightPod: p,
           weightCc: c,
           minWeeks: m,

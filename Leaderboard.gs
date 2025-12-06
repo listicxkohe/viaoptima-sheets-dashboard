@@ -15,6 +15,11 @@ var LB_KEYS = {
 
 // ScriptProperties key
 var LB_PROP_KEY = "leaderboardConfig_v1";
+// Quality rating thresholds
+var QUALITY_THRESHOLDS = {
+  percent: { fantastic: 0.96, onTarget: 0.85 }, // for DCR / POD / CC (fractions 0-1)
+  dpmo: { fantastic: 700, onTarget: 1650 }, // for DNR DPMO (lower is better)
+};
 
 /************************************************
  * SHARED HELPERS (define once if missing)
@@ -61,11 +66,38 @@ function parseDateCellFallback_(cell) {
   return null;
 }
 
+// Rating helpers
+function ratePercent_(fraction) {
+  if (fraction == null || isNaN(fraction)) return "";
+  if (fraction >= QUALITY_THRESHOLDS.percent.fantastic) return "Fantastic";
+  if (fraction >= QUALITY_THRESHOLDS.percent.onTarget) return "On Target";
+  return "Below Target";
+}
+
+function rateDpmo_(dpmo) {
+  if (dpmo == null || isNaN(dpmo)) return "";
+  if (dpmo < QUALITY_THRESHOLDS.dpmo.fantastic) return "Fantastic";
+  if (dpmo < QUALITY_THRESHOLDS.dpmo.onTarget) return "On Target";
+  return "Below Target";
+}
+
+function dnrQualityFraction_(dpmo) {
+  if (dpmo == null || isNaN(dpmo)) return null;
+  var best = QUALITY_THRESHOLDS.dpmo.fantastic;
+  var okMax = QUALITY_THRESHOLDS.dpmo.onTarget;
+  if (dpmo < best) return 1;
+  if (dpmo > okMax) return 0;
+  var span = okMax - best;
+  if (span <= 0) return 0;
+  var remaining = okMax - dpmo;
+  return Math.max(0, Math.min(1, remaining / span));
+}
+
 /**
  * Build a Gaussian curve scaled to histogram counts.
- * y is scaled so that the area under the curve approximates total samples.
+ * y is scaled so that the peak roughly matches the histogram peak.
  */
-function buildGaussianCurve_(scores, stats, bucketSize, minScore, maxScore) {
+function buildGaussianCurve_(scores, stats, bucketSize, minScore, maxScore, peakCount) {
   if (!stats || stats.stddev == null || stats.stddev === 0 || !scores || !scores.length) return [];
   var mean = (typeof stats.meanRaw === "number") ? stats.meanRaw : stats.mean;
   var sd = (typeof stats.stddevRaw === "number") ? stats.stddevRaw : stats.stddev;
@@ -77,7 +109,9 @@ function buildGaussianCurve_(scores, stats, bucketSize, minScore, maxScore) {
   var steps = 80;
   var points = [];
   var normCoef = 1 / (sd * Math.sqrt(2 * Math.PI));
-  var scale = n * width; // area ~ n
+  var pdfPeak = normCoef; // at mean
+  var targetPeak = (typeof peakCount === "number" && peakCount > 0) ? peakCount : n * width;
+  var scale = pdfPeak > 0 ? targetPeak / pdfPeak : 1;
   for (var i = 0; i <= steps; i++) {
     var x = start + (i / steps) * (end - start);
     var expPart = -((x - mean) * (x - mean)) / (2 * sd * sd);
@@ -108,36 +142,50 @@ function saveLeaderboardConfig(cfg) {
   var d = Number(cfg.dcrWeight || cfg.weightDcr) || 0;
   var p = Number(cfg.podWeight || cfg.weightPod) || 0;
   var c = Number(cfg.ccWeight || cfg.weightCc) || 0;
+  var dn = Number(cfg.dnrWeight || cfg.weightDnr) || 0;
   var minWeeks = parseInt(cfg.minWeeks, 10);
   if (!isFinite(minWeeks) || minWeeks < 0) minWeeks = 0;
 
-  // Normalise DCR/POD/CC weights so they sum to 1
-  var total = d + p + c;
+  // Normalise DCR/POD/CC/DNR weights so they sum to 1
+  var total = d + p + c + dn;
   if (total <= 0) {
-    d = 0.4;
-    p = 0.4;
-    c = 0.2;
+    d = 0.35;
+    p = 0.35;
+    c = 0.15;
+    dn = 0.15;
     total = 1.0;
   }
   d = d / total;
   p = p / total;
   c = c / total;
+  dn = dn / total;
 
   // Extra weights for volume / weeks / rescues
   var vol = Number(cfg.volumeWeight) || 0.5;
   var wWeeks = Number(cfg.weeksWeight) || 0.3;
   var wResGiven = Number(cfg.rescuesGivenWeight) || 1.0;
   var wResTaken = Number(cfg.rescuesTakenWeight) || 1.0;
+  var volTarget = Number(cfg.volumeTarget) || 4000;
+  var weeksTarget = Number(cfg.weeksTarget) || 12;
+  var rescueCap = Number(cfg.rescueCap) || 5;
+  // Adjust defaults to better scaling if not set
+  if (!cfg || !cfg.hasOwnProperty("volumeTarget")) volTarget = 1500;
+  if (!cfg || !cfg.hasOwnProperty("weeksTarget")) weeksTarget = 8;
+  if (!cfg || !cfg.hasOwnProperty("rescueCap")) rescueCap = 3;
 
   var toSave = {
     dcrWeight: d,
     podWeight: p,
     ccWeight: c,
+    dnrWeight: dn,
     minWeeks: minWeeks,
     volumeWeight: vol,
     weeksWeight: wWeeks,
     rescuesGivenWeight: wResGiven,
     rescuesTakenWeight: wResTaken,
+    volumeTarget: volTarget,
+    weeksTarget: weeksTarget,
+    rescueCap: rescueCap,
   };
 
   PropertiesService.getScriptProperties().setProperty(
@@ -255,6 +303,7 @@ function getLeaderboardData(weekFilter) {
 
     var delivered = Number(sRow[6]) || 0;
     var dcrP = parsePercent_(sRow[7]);
+    var dnrDpmo = sRow[8] != null && sRow[8] !== "" ? Number(sRow[8]) : null;
     var podP = parsePercent_(sRow[9]);
     var ccP = parsePercent_(sRow[10]);
 
@@ -264,6 +313,8 @@ function getLeaderboardData(weekFilter) {
         weeksSet: {},
         dcrSum: 0,
         dcrCount: 0,
+        dnrDefects: 0,
+        dnrDelivered: 0,
         podSum: 0,
         podCount: 0,
         ccSum: 0,
@@ -281,6 +332,10 @@ function getLeaderboardData(weekFilter) {
       s.dcrCount++;
       dcrSumAll += dcrP;
       dcrCountAll++;
+    }
+    if (dnrDpmo != null && delivered) {
+      s.dnrDefects += (dnrDpmo * delivered) / 1000000;
+      s.dnrDelivered += delivered;
     }
     if (podP != null) {
       s.podSum += podP;
@@ -362,6 +417,10 @@ function getLeaderboardData(weekFilter) {
       deliveries: base.deliveries,
       weeks: weeks,
       dcr: base.dcrCount ? base.dcrSum / base.dcrCount : null,
+      dnrDpmo:
+        base.dnrDelivered > 0
+          ? (base.dnrDefects / base.dnrDelivered) * 1000000
+          : null,
       pod: base.podCount ? base.podSum / base.podCount : null,
       cc: base.ccCount ? base.ccSum / base.ccCount : null,
       rescuesGiven: rescueStats.given || 0,
@@ -378,6 +437,7 @@ function getLeaderboardData(weekFilter) {
         deliveries: 0,
         weeks: 0,
         dcr: null,
+        dnrDpmo: null,
         pod: null,
         cc: null,
         rescuesGiven: rescueStats.given || 0,
@@ -403,6 +463,7 @@ function getLeaderboardData(weekFilter) {
     var weeks = stat ? stat.weeks : 0;
     var deliveries = stat ? stat.deliveries : 0;
     var dcrAvg = stat && stat.dcr != null ? stat.dcr : null;
+    var dnrDpmo = stat && stat.dnrDpmo != null ? stat.dnrDpmo : null;
     var podAvg = stat && stat.pod != null ? stat.pod : null;
     var ccAvg = stat && stat.cc != null ? stat.cc : null;
     var rescGiven = stat ? stat.rescuesGiven || 0 : 0;
@@ -413,6 +474,7 @@ function getLeaderboardData(weekFilter) {
         deliveries: deliveries,
         weeks: weeks,
         dcr: dcrAvg,
+        dnrDpmo: dnrDpmo,
         pod: podAvg,
         cc: ccAvg,
         rescuesGiven: rescGiven,
@@ -429,8 +491,13 @@ function getLeaderboardData(weekFilter) {
       weeks: weeks,
       deliveries: deliveries,
       dcr: dcrAvg != null ? roundPct_(dcrAvg) : null,
+      dcrRating: ratePercent_(dcrAvg),
+      dnrDpmo: dnrDpmo != null ? roundToOne_(dnrDpmo) : null,
+      dnrRating: rateDpmo_(dnrDpmo),
       pod: podAvg != null ? roundPct_(podAvg) : null,
+      podRating: ratePercent_(podAvg),
       cc: ccAvg != null ? roundPct_(ccAvg) : null,
+      ccRating: ratePercent_(ccAvg),
       rescuesGiven: rescGiven,
       rescuesTaken: rescTaken,
       score: score,
@@ -536,6 +603,20 @@ function getLeaderboardConfig_() {
         typeof cfg.podWeight === "number" &&
         typeof cfg.ccWeight === "number"
       ) {
+        if (typeof cfg.dnrWeight !== "number") cfg.dnrWeight = 0.15;
+        // Renormalise the four weights
+        var total = cfg.dcrWeight + cfg.podWeight + cfg.ccWeight + cfg.dnrWeight;
+        if (total <= 0) {
+          cfg.dcrWeight = 0.35;
+          cfg.podWeight = 0.35;
+          cfg.ccWeight = 0.15;
+          cfg.dnrWeight = 0.15;
+        } else {
+          cfg.dcrWeight = cfg.dcrWeight / total;
+          cfg.podWeight = cfg.podWeight / total;
+          cfg.ccWeight = cfg.ccWeight / total;
+          cfg.dnrWeight = cfg.dnrWeight / total;
+        }
         // Ensure extra weights exist with defaults
         if (typeof cfg.volumeWeight !== "number") cfg.volumeWeight = 0.5;
         if (typeof cfg.weeksWeight !== "number") cfg.weeksWeight = 0.3;
@@ -544,6 +625,9 @@ function getLeaderboardConfig_() {
         if (typeof cfg.rescuesTakenWeight !== "number")
           cfg.rescuesTakenWeight = 1.0;
         if (typeof cfg.minWeeks !== "number") cfg.minWeeks = 1;
+        if (typeof cfg.volumeTarget !== "number") cfg.volumeTarget = 4000;
+        if (typeof cfg.weeksTarget !== "number") cfg.weeksTarget = 12;
+        if (typeof cfg.rescueCap !== "number") cfg.rescueCap = 5;
         return cfg;
       }
     } catch (err) {
@@ -555,11 +639,15 @@ function getLeaderboardConfig_() {
     dcrWeight: 0.4,
     podWeight: 0.4,
     ccWeight: 0.2,
+    dnrWeight: 0.15,
     minWeeks: 1,
     volumeWeight: 0.5,
     weeksWeight: 0.3,
     rescuesGivenWeight: 1.0,
     rescuesTakenWeight: 1.0,
+    volumeTarget: 1500,
+    weeksTarget: 8,
+    rescueCap: 3,
   };
 }
 
@@ -612,21 +700,70 @@ function computeScore_(stats, cfg) {
   }
 
   // Quality component (0–100 each * normalised weights)
-  var qDcr = stats.dcr * 100 * cfg.dcrWeight;
-  var qPod = stats.pod * 100 * cfg.podWeight;
-  var qCc = stats.cc * 100 * cfg.ccWeight;
-  var quality = qDcr + qPod + qCc;
+  var items = [];
+  if (stats.dcr != null) items.push({ value: stats.dcr, weight: cfg.dcrWeight });
+  if (stats.pod != null) items.push({ value: stats.pod, weight: cfg.podWeight });
+  if (stats.cc != null) items.push({ value: stats.cc, weight: cfg.ccWeight });
+  if (stats.dnrDpmo != null) {
+    var qDnr = dnrQualityFraction_(stats.dnrDpmo);
+    if (qDnr != null) items.push({ value: qDnr, weight: cfg.dnrWeight });
+  }
 
-  // Volume & experience – now fully weight-controlled
-  var volume = Math.log(1 + deliveries) * (cfg.volumeWeight || 0);
-  var experience = weeks * (cfg.weeksWeight || 0);
+  var weightSum = 0;
+  var qualityFraction = 0;
+  for (var i = 0; i < items.length; i++) {
+    var w = items[i].weight || 0;
+    if (w <= 0) continue;
+    weightSum += w;
+    qualityFraction += items[i].value * w;
+  }
+  if (weightSum <= 0) return null;
+  var qualityScore = qualityFraction / weightSum; // 0-1
 
-  // Rescues: given = positive, taken = negative
-  var rescG = (stats.rescuesGiven || 0) * (cfg.rescuesGivenWeight || 0);
-  var rescT = (stats.rescuesTaken || 0) * (cfg.rescuesTakenWeight || 0);
+  // Volume (0-1, capped)
+  var volTarget = cfg.volumeTarget || 1500;
+  var volDen = Math.log(1 + Math.max(volTarget, 1));
+  var volumeScore =
+    volDen > 0 ? Math.min(1, Math.log(1 + Math.max(deliveries, 0)) / volDen) : 0;
 
-  var score = quality + volume + experience + rescG - rescT;
-  return Math.round(score * 10) / 10; // one decimal place
+  // Experience (0-1)
+  var weeksTarget = cfg.weeksTarget || 8;
+  var experienceScore =
+    weeksTarget > 0 ? Math.min(1, Math.max(0, weeks / weeksTarget)) : 0;
+
+  // Rescues (0-1), centered at 0.5 for net zero
+  var rescueCap = cfg.rescueCap || 3;
+  var netRescues =
+    (stats.rescuesGiven || 0) * (cfg.rescuesGivenWeight || 0) -
+    (stats.rescuesTaken || 0) * (cfg.rescuesTakenWeight || 0);
+  var rescueScore =
+    rescueCap > 0
+      ? Math.min(1, Math.max(0, (netRescues + rescueCap) / (2 * rescueCap)))
+      : 0.5;
+
+  // Top-level weights derived from sliders and normalised to 1
+  var qualityBase = 2; // bias toward quality so great metrics land closer to 100
+  var volRaw = Math.max(cfg.volumeWeight || 0, 0);
+  var expRaw = Math.max(cfg.weeksWeight || 0, 0);
+  // Use the larger of rescue weights (not sum) to avoid overpowering quality
+  var resRaw = Math.max(
+    Math.max(cfg.rescuesGivenWeight || 0, 0),
+    Math.max(cfg.rescuesTakenWeight || 0, 0)
+  );
+  var totalTop = qualityBase + volRaw + expRaw + resRaw;
+  var wQuality = qualityBase / totalTop;
+  var wVolume = volRaw / totalTop;
+  var wExperience = expRaw / totalTop;
+  var wRescue = resRaw / totalTop;
+
+  var combined =
+    wQuality * qualityScore +
+    wVolume * volumeScore +
+    wExperience * experienceScore +
+    wRescue * rescueScore;
+
+  var score = combined * 100;
+  return Math.round(score * 10) / 10; // one decimal place, max 100
 }
 
 /**
@@ -730,6 +867,7 @@ function computeRanksForWeek_(weekNum, scoreVals, cfg, nameToIds, completeSheet,
     if (!id) continue;
     var delivered = Number(row[6]) || 0;
     var dcrP = parsePercent_(row[7]);
+    var dnrDpmo = row[8] != null && row[8] !== "" ? Number(row[8]) : null;
     var podP = parsePercent_(row[9]);
     var ccP = parsePercent_(row[10]);
     if (!statsById[id]) {
@@ -738,6 +876,8 @@ function computeRanksForWeek_(weekNum, scoreVals, cfg, nameToIds, completeSheet,
         weeksSet: {},
         dcrSum: 0,
         dcrCount: 0,
+        dnrDefects: 0,
+        dnrDelivered: 0,
         podSum: 0,
         podCount: 0,
         ccSum: 0,
@@ -752,6 +892,10 @@ function computeRanksForWeek_(weekNum, scoreVals, cfg, nameToIds, completeSheet,
     if (dcrP != null) {
       s.dcrSum += dcrP;
       s.dcrCount++;
+    }
+    if (dnrDpmo != null && delivered) {
+      s.dnrDefects += (dnrDpmo * delivered) / 1000000;
+      s.dnrDelivered += delivered;
     }
     if (podP != null) {
       s.podSum += podP;
@@ -803,6 +947,10 @@ function computeRanksForWeek_(weekNum, scoreVals, cfg, nameToIds, completeSheet,
     var weeks = Object.keys(base.weeksSet).length;
     var rescueStats = rescueById[idKey] || { given: 0, taken: 0 };
     var dcrAvg = base.dcrCount ? base.dcrSum / base.dcrCount : null;
+    var dnrDpmo =
+      base.dnrDelivered > 0
+        ? (base.dnrDefects / base.dnrDelivered) * 1000000
+        : null;
     var podAvg = base.podCount ? base.podSum / base.podCount : null;
     var ccAvg = base.ccCount ? base.ccSum / base.ccCount : null;
     var score = computeScore_(
@@ -810,6 +958,7 @@ function computeRanksForWeek_(weekNum, scoreVals, cfg, nameToIds, completeSheet,
         deliveries: base.deliveries,
         weeks: weeks,
         dcr: dcrAvg,
+        dnrDpmo: dnrDpmo,
         pod: podAvg,
         cc: ccAvg,
         rescuesGiven: rescueStats.given || 0,
@@ -941,7 +1090,8 @@ function buildDistribution_(rows) {
   scores.sort(function (a, b) { return a - b; });
   var stats = computeStats_(scores);
   var histogram = computeHistogram_(scores, stats, rows);
-  var curvePoints = buildGaussianCurve_(scores, stats, histogram.bucketSize, histogram.minScore, histogram.maxScore);
+  var maxCount = histogram.buckets.reduce(function(m, b) { return Math.max(m, b.count || 0); }, 0);
+  var curvePoints = buildGaussianCurve_(scores, stats, histogram.bucketSize, histogram.minScore, histogram.maxScore, maxCount);
 
   return {
     buckets: histogram.buckets,
@@ -1009,7 +1159,8 @@ function buildDistributionFromScores_(scores) {
   var sorted = scores.slice().sort(function (a, b) { return a - b; });
   var stats = computeStats_(sorted);
   var histogram = computeHistogramFromScores_(sorted, stats);
-  var curvePoints = buildGaussianCurve_(sorted, stats, histogram.bucketSize, histogram.minScore, histogram.maxScore);
+  var maxCount = histogram.buckets.reduce(function(m, b) { return Math.max(m, b.count || 0); }, 0);
+  var curvePoints = buildGaussianCurve_(sorted, stats, histogram.bucketSize, histogram.minScore, histogram.maxScore, maxCount);
   return {
     smoothed: histogram.smoothed,
     stats: stats,
@@ -1078,6 +1229,7 @@ function computeScoresForWeek_(weekNum, scoreVals, cfg, nameToIds, completeSheet
     if (!id) continue;
     var delivered = Number(row[6]) || 0;
     var dcrP = parsePercent_(row[7]);
+    var dnrDpmo = row[8] != null && row[8] !== "" ? Number(row[8]) : null;
     var podP = parsePercent_(row[9]);
     var ccP = parsePercent_(row[10]);
     if (!statsById[id]) {
@@ -1086,6 +1238,8 @@ function computeScoresForWeek_(weekNum, scoreVals, cfg, nameToIds, completeSheet
         weeksSet: {},
         dcrSum: 0,
         dcrCount: 0,
+        dnrDefects: 0,
+        dnrDelivered: 0,
         podSum: 0,
         podCount: 0,
         ccSum: 0,
@@ -1100,6 +1254,10 @@ function computeScoresForWeek_(weekNum, scoreVals, cfg, nameToIds, completeSheet
     if (dcrP != null) {
       s.dcrSum += dcrP;
       s.dcrCount++;
+    }
+    if (dnrDpmo != null && delivered) {
+      s.dnrDefects += (dnrDpmo * delivered) / 1000000;
+      s.dnrDelivered += delivered;
     }
     if (podP != null) {
       s.podSum += podP;
@@ -1151,6 +1309,10 @@ function computeScoresForWeek_(weekNum, scoreVals, cfg, nameToIds, completeSheet
     var weeks = Object.keys(base.weeksSet).length;
     var rescueStats = rescueById[idKey] || { given: 0, taken: 0 };
     var dcrAvg = base.dcrCount ? base.dcrSum / base.dcrCount : null;
+    var dnrDpmo =
+      base.dnrDelivered > 0
+        ? (base.dnrDefects / base.dnrDelivered) * 1000000
+        : null;
     var podAvg = base.podCount ? base.podSum / base.podCount : null;
     var ccAvg = base.ccCount ? base.ccSum / base.ccCount : null;
     var score = computeScore_(
@@ -1158,6 +1320,7 @@ function computeScoresForWeek_(weekNum, scoreVals, cfg, nameToIds, completeSheet
         deliveries: base.deliveries,
         weeks: weeks,
         dcr: dcrAvg,
+        dnrDpmo: dnrDpmo,
         pod: podAvg,
         cc: ccAvg,
         rescuesGiven: rescueStats.given || 0,
@@ -1202,6 +1365,15 @@ function computeStats_(arr) {
     p90: roundToOne_(percentile_(arr, 0.9)),
     p95: roundToOne_(percentile_(arr, 0.95)),
   };
+}
+
+function percentile_(sortedArr, p) {
+  if (!sortedArr || !sortedArr.length) return null;
+  var idx = (sortedArr.length - 1) * p;
+  var lower = Math.floor(idx);
+  var upper = Math.ceil(idx);
+  if (lower === upper) return sortedArr[lower];
+  return sortedArr[lower] + (sortedArr[upper] - sortedArr[lower]) * (idx - lower);
 }
 
 function computeHistogram_(scores, stats, rows) {

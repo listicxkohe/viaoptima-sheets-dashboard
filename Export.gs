@@ -132,6 +132,10 @@ function buildScorecardEmailText_(data, weekLabel) {
         .join(" | ")
   );
   lines.push(
+    "Avg DNR DPMO: " +
+      (metrics.avgDnrDpmo != null ? metrics.avgDnrDpmo.toFixed(1) : "N/A")
+  );
+  lines.push(
     "Rescues given/taken: " +
       formatScorecardNumber_(rescues.totalGiven) +
       " / " +
@@ -207,6 +211,7 @@ function buildScorecardEmailHtml_(data, weekLabel, fileName) {
     buildMetricCard_("Score", scoreText, rankText, "#2563eb") +
     buildMetricCard_("Deliveries", num(metrics.deliveries), "Total deliveries", "#0ea5e9") +
     buildMetricCard_("Avg DCR", pct(metrics.avgDcr), "Quality", "#16a34a") +
+    buildMetricCard_("Avg DNR DPMO", metrics.avgDnrDpmo != null ? metrics.avgDnrDpmo.toFixed(1) : "N/A", "Lower is better", "#0f766e") +
     buildMetricCard_("Avg POD", pct(metrics.avgPod), "Proof of delivery", "#6366f1") +
     buildMetricCard_("Avg CC", pct(metrics.avgCc), "Customer care", "#f97316") +
     buildMetricCard_(
@@ -356,19 +361,25 @@ function appendMetricCards_(body, data) {
     {
       label: "Avg DCR",
       value: formatScorecardPercent_(metrics.avgDcr),
-      note: formatScorecardRank_(ranks.dcr),
+      note: (metrics.ratings && metrics.ratings.dcr) || formatScorecardRank_(ranks.dcr),
       trend: buildTrendText_(trends.dcr, false),
+    },
+    {
+      label: "Avg DNR DPMO",
+      value: metrics.avgDnrDpmo != null ? metrics.avgDnrDpmo.toFixed(1) : "N/A",
+      note: metrics.ratings && metrics.ratings.dnr ? metrics.ratings.dnr : "",
+      trend: buildTrendText_(trends.dnr, false),
     },
     {
       label: "Avg POD",
       value: formatScorecardPercent_(metrics.avgPod),
-      note: formatScorecardRank_(ranks.pod),
+      note: (metrics.ratings && metrics.ratings.pod) || formatScorecardRank_(ranks.pod),
       trend: buildTrendText_(trends.pod, false),
     },
     {
       label: "Avg CC",
       value: formatScorecardPercent_(metrics.avgCc),
-      note: formatScorecardRank_(ranks.cc),
+      note: (metrics.ratings && metrics.ratings.cc) || formatScorecardRank_(ranks.cc),
       trend: buildTrendText_(trends.cc, false),
     },
   ];

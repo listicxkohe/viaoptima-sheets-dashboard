@@ -2,6 +2,43 @@
  * DRIVER SCORECARD - SERVER SIDE
  ************************************************/
 
+// Shared thresholds/rating helpers (fallbacks if not defined globally)
+if (typeof QUALITY_THRESHOLDS === "undefined") {
+  var QUALITY_THRESHOLDS = {
+    percent: { fantastic: 0.96, onTarget: 0.85 },
+    dpmo: { fantastic: 700, onTarget: 1650 },
+  };
+}
+if (typeof ratePercent_ !== "function") {
+  function ratePercent_(fraction) {
+    if (fraction == null || isNaN(fraction)) return "";
+    if (fraction >= QUALITY_THRESHOLDS.percent.fantastic) return "Fantastic";
+    if (fraction >= QUALITY_THRESHOLDS.percent.onTarget) return "On Target";
+    return "Below Target";
+  }
+}
+if (typeof rateDpmo_ !== "function") {
+  function rateDpmo_(dpmo) {
+    if (dpmo == null || isNaN(dpmo)) return "";
+    if (dpmo < QUALITY_THRESHOLDS.dpmo.fantastic) return "Fantastic";
+    if (dpmo < QUALITY_THRESHOLDS.dpmo.onTarget) return "On Target";
+    return "Below Target";
+  }
+}
+if (typeof dnrQualityFraction_ !== "function") {
+  function dnrQualityFraction_(dpmo) {
+    if (dpmo == null || isNaN(dpmo)) return null;
+    var best = QUALITY_THRESHOLDS.dpmo.fantastic;
+    var okMax = QUALITY_THRESHOLDS.dpmo.onTarget;
+    if (dpmo < best) return 1;
+    if (dpmo > okMax) return 0;
+    var span = okMax - best;
+    if (span <= 0) return 0;
+    var remaining = okMax - dpmo;
+    return Math.max(0, Math.min(1, remaining / span));
+  }
+}
+
 function openDriverScorecardDialog(transporterId, driverName, weekFilter) {
   var id = sanitizeTransporterId_(transporterId);
   if (!id) {
@@ -95,8 +132,15 @@ function getDriverScorecardData(transporterId, weekFilter) {
     metrics: {
       deliveries: weeklyInfo.totalDeliveries,
       avgDcr: weeklyInfo.avgDcr,
+      avgDnrDpmo: weeklyInfo.avgDnrDpmo,
       avgPod: weeklyInfo.avgPod,
       avgCc: weeklyInfo.avgCc,
+      ratings: {
+        dcr: ratePercent_(weeklyInfo.avgDcr != null ? weeklyInfo.avgDcr / 100 : null),
+        dnr: rateDpmo_(weeklyInfo.avgDnrDpmo),
+        pod: ratePercent_(weeklyInfo.avgPod != null ? weeklyInfo.avgPod / 100 : null),
+        cc: ratePercent_(weeklyInfo.avgCc != null ? weeklyInfo.avgCc / 100 : null),
+      },
     },
     metricRanks: metricRanks,
     metricTrends: weeklyInfo.metricTrends,
@@ -191,6 +235,7 @@ function collectWeeklyScorecardStats_(sheet, transporterId, tz, opts) {
 
     var delivered = Number(row[6]) || 0;
     var dcr = parsePercent_(row[7]);
+    var dnr = row[8] != null && row[8] !== "" ? Number(row[8]) : null;
     var pod = parsePercent_(row[9]);
     var cc = parsePercent_(row[10]);
     var driverName = String(row[2] || "").trim();
@@ -208,6 +253,7 @@ function collectWeeklyScorecardStats_(sheet, transporterId, tz, opts) {
       dateKey: weDate ? Utilities.formatDate(weDate, tz, "yyyy-MM-dd") : "",
       delivered: delivered,
       dcrValue: dcr,
+      dnrValue: dnr,
       podValue: pod,
       ccValue: cc,
       driverName: driverName,
@@ -255,6 +301,7 @@ function collectWeeklyScorecardStats_(sheet, transporterId, tz, opts) {
         : "";
       var dcrDisplay =
         current.dcrValue != null ? roundPct_(current.dcrValue) : null;
+      var dnrDisplay = current.dnrValue != null ? roundToOne_(current.dnrValue) : null;
       var podDisplay =
         current.podValue != null ? roundPct_(current.podValue) : null;
       var ccDisplay =
@@ -265,6 +312,7 @@ function collectWeeklyScorecardStats_(sheet, transporterId, tz, opts) {
         dateKey: current.dateKey,
         delivered: current.delivered,
         dcr: dcrDisplay,
+        dnr: dnrDisplay,
         pod: podDisplay,
         cc: ccDisplay,
         deliveredChange: prevRecord ? current.delivered - prevRecord.delivered : null,
@@ -275,6 +323,10 @@ function collectWeeklyScorecardStats_(sheet, transporterId, tz, opts) {
         dcrChange:
           prevRecord && dcrDisplay != null && prevRecord.dcr != null
             ? roundToOne_(dcrDisplay - prevRecord.dcr)
+            : null,
+        dnrChange:
+          prevRecord && dnrDisplay != null && prevRecord.dnr != null
+            ? roundToOne_(prevRecord.dnr - dnrDisplay) // lower is better
             : null,
         podChange:
           prevRecord && podDisplay != null && prevRecord.pod != null
@@ -332,6 +384,8 @@ function collectWeeklyScorecardStats_(sheet, transporterId, tz, opts) {
   var totalDeliveries = 0;
   var dcrSum = 0;
   var dcrCount = 0;
+  var dnrDefects = 0;
+  var dnrDelivered = 0;
   var podSum = 0;
   var podCount = 0;
   var ccSum = 0;
@@ -348,6 +402,10 @@ function collectWeeklyScorecardStats_(sheet, transporterId, tz, opts) {
     if (rec.dcrValue != null) {
       dcrSum += rec.dcrValue;
       dcrCount++;
+    }
+    if (rec.dnrValue != null && rec.delivered) {
+      dnrDefects += (rec.dnrValue * rec.delivered) / 1000000;
+      dnrDelivered += rec.delivered;
     }
     if (rec.podValue != null) {
       podSum += rec.podValue;
@@ -366,6 +424,8 @@ function collectWeeklyScorecardStats_(sheet, transporterId, tz, opts) {
   }
 
   var avgDcr = dcrCount ? roundPct_(dcrSum / dcrCount) : null;
+  var avgDnrDpmo =
+    dnrDelivered > 0 ? roundToOne_((dnrDefects / dnrDelivered) * 1000000) : null;
   var avgPod = podCount ? roundPct_(podSum / podCount) : null;
   var avgCc = ccCount ? roundPct_(ccSum / ccCount) : null;
   var weeksCount = Object.keys(weeksSet).length;
@@ -427,6 +487,7 @@ function collectWeeklyScorecardStats_(sheet, transporterId, tz, opts) {
     totalDeliveries: totalDeliveries,
     weeksCount: weeksCount,
     avgDcr: avgDcr,
+    avgDnrDpmo: avgDnrDpmo,
     avgPod: avgPod,
     avgCc: avgCc,
     lastWeekLabel: lastWeDate
@@ -464,11 +525,15 @@ function buildWeeklyScoreSeries_(records, tz) {
       dcrWeight: 0.4,
       podWeight: 0.4,
       ccWeight: 0.2,
+      dnrWeight: 0.15,
       minWeeks: 0,
       volumeWeight: 0.5,
       weeksWeight: 0.3,
       rescuesGivenWeight: 1.0,
       rescuesTakenWeight: 1.0,
+      volumeTarget: 1500,
+      weeksTarget: 8,
+      rescueCap: 3,
     };
   } else {
     cfg = JSON.parse(JSON.stringify(cfg));
@@ -481,6 +546,8 @@ function buildWeeklyScoreSeries_(records, tz) {
     weeks: 0,
     dcrSum: 0,
     dcrCount: 0,
+    dnrDefects: 0,
+    dnrDelivered: 0,
     podSum: 0,
     podCount: 0,
     ccSum: 0,
@@ -495,6 +562,10 @@ function buildWeeklyScoreSeries_(records, tz) {
       running.dcrSum += rec.dcrValue;
       running.dcrCount++;
     }
+    if (rec.dnrValue != null && rec.delivered) {
+      running.dnrDefects += (rec.dnrValue * rec.delivered) / 1000000;
+      running.dnrDelivered += rec.delivered;
+    }
     if (rec.podValue != null) {
       running.podSum += rec.podValue;
       running.podCount++;
@@ -508,6 +579,10 @@ function buildWeeklyScoreSeries_(records, tz) {
       deliveries: running.deliveries,
       weeks: running.weeks,
       dcr: running.dcrCount ? running.dcrSum / running.dcrCount : null,
+      dnrDpmo:
+        running.dnrDelivered > 0
+          ? (running.dnrDefects / running.dnrDelivered) * 1000000
+          : null,
       pod: running.podCount ? running.podSum / running.podCount : null,
       cc: running.ccCount ? running.ccSum / running.ccCount : null,
       rescuesGiven: 0,
@@ -1185,15 +1260,19 @@ function computeTeamAverages_(rows) {
 function calculateQualityScore_(row) {
   if (!row) return null;
   var values = [];
-  if (row.dcr != null) values.push(row.dcr);
-  if (row.pod != null) values.push(row.pod);
-  if (row.cc != null) values.push(row.cc);
+  if (row.dcr != null) values.push(row.dcr / 100);
+  if (row.pod != null) values.push(row.pod / 100);
+  if (row.cc != null) values.push(row.cc / 100);
+  if (row.dnrDpmo != null) {
+    var q = dnrQualityFraction_(row.dnrDpmo);
+    if (q != null) values.push(q);
+  }
   if (!values.length) return null;
   var sum = 0;
   for (var i = 0; i < values.length; i++) {
     sum += values[i];
   }
-  return sum / values.length;
+  return (sum / values.length) * 100;
 }
 
 function buildDriverNameCandidates_(masterInfo, weeklyInfo) {
@@ -1268,6 +1347,7 @@ function buildMetricTrendSummary_(weeklyRows) {
   return {
     deliveries: buildTrendData_(last ? last.delivered : null, prev ? prev.delivered : null),
     dcr: buildTrendData_(last ? last.dcr : null, prev ? prev.dcr : null),
+    dnr: buildTrendDataLowerIsBetter_(last ? last.dnr : null, prev ? prev.dnr : null),
     pod: buildTrendData_(last ? last.pod : null, prev ? prev.pod : null),
     cc: buildTrendData_(last ? last.cc : null, prev ? prev.cc : null),
   };
@@ -1278,6 +1358,18 @@ function buildTrendData_(current, previous) {
     return { delta: null, percent: null };
   }
   var delta = current - previous;
+  var percent = previous !== 0 ? (delta / previous) * 100 : null;
+  return {
+    delta: roundToOne_(delta),
+    percent: percent != null ? roundToOne_(percent) : null,
+  };
+}
+
+function buildTrendDataLowerIsBetter_(current, previous) {
+  if (current == null || previous == null) {
+    return { delta: null, percent: null };
+  }
+  var delta = previous - current; // improvement is positive when DPMO drops
   var percent = previous !== 0 ? (delta / previous) * 100 : null;
   return {
     delta: roundToOne_(delta),

@@ -285,7 +285,7 @@
     <div class="shell">
       <h1>Driver leaderboard</h1>
       <div class="subtitle">
-        Ranking is based on weighted DCR, POD, CC, weeks and deliveries.
+        Ranking is based on weighted DCR, DNR DPMO, POD, CC plus volume/experience/rescues.
         Weights are controlled in the ViaOptima sidebar in your sheet.
       </div>
 
@@ -352,6 +352,7 @@
               <th class="sortable" data-field="weeks" title="Number of weeks included for this view."><span>Weeks</span></th>
               <th class="sortable" data-field="deliveries" title="Total deliveries in the selected week (or filtered view)."><span>Deliveries</span></th>
               <th class="sortable" data-field="dcr" title="Delivery completion rate."><span>DCR</span></th>
+              <th class="sortable" data-field="dnrDpmo" title="Delivered not received per million opportunities (lower is better)."><span>DNR DPMO</span></th>
               <th class="sortable" data-field="pod" title="Proof of delivery rate."><span>POD</span></th>
               <th class="sortable" data-field="cc" title="Customer contact rate."><span>CC</span></th>
               <th class="sortable" data-field="score" title="Overall weighted score using configured weights."><span>Score</span></th>
@@ -359,7 +360,7 @@
             </tr>
           </thead>
           <tbody id="tbody">
-            <tr><td colspan="11" class="muted" style="padding:14px;">Loading leaderboard...</td></tr>
+            <tr><td colspan="13" class="muted" style="padding:14px;">Loading leaderboard...</td></tr>
           </tbody>
         </table>
       </div>
@@ -428,6 +429,11 @@
         return val.toFixed(1) + '%';
       }
 
+      function formatDpmo(val) {
+        if (val === null || val === undefined || val === '') return 'NA';
+        return val.toFixed(1);
+      }
+
       function formatNumber(n) {
         if (n === null || n === undefined) return '0';
         return n.toLocaleString();
@@ -439,7 +445,7 @@
         }
         setStatus('Loading ' + getWeekLabel(selectedWeek) + '...');
         document.getElementById('tbody').innerHTML =
-          '<tr><td colspan="11" class="muted" style="padding:14px;">Loading leaderboard...</td></tr>';
+          '<tr><td colspan="13" class="muted" style="padding:14px;">Loading leaderboard...</td></tr>';
 
         google.script.run
           .withSuccessHandler(function(data) {
@@ -467,9 +473,9 @@
             renderDistribution();
           })
           .withFailureHandler(function(err) {
-            document.getElementById('tbody').innerHTML =
-              '<tr><td colspan="11" class="muted" style="padding:14px;">Error loading: '
-              + (err && err.message ? err.message : err) + '</td></tr>';
+        document.getElementById('tbody').innerHTML =
+          '<tr><td colspan="13" class="muted" style="padding:14px;">Error loading: '
+          + (err && err.message ? err.message : err) + '</td></tr>';
             setStatus('Error loading leaderboard – check Apps Script logs.');
           })
           .getLeaderboardData(selectedWeek);
@@ -587,7 +593,7 @@
       function renderTable() {
         const tb = document.getElementById('tbody');
         if (!filteredRows.length) {
-          tb.innerHTML = '<tr><td colspan="11" class="muted" style="padding:14px;">No drivers match this filter.</td></tr>';
+          tb.innerHTML = '<tr><td colspan="13" class="muted" style="padding:14px;">No drivers match this filter.</td></tr>';
           return;
         }
 
@@ -610,7 +616,12 @@
 
           const dcr = row.dcr != null ? formatPercent(row.dcr) : 'NA';
           const pod = row.pod != null ? formatPercent(row.pod) : 'NA';
+          const dnr = row.dnrDpmo != null ? formatDpmo(row.dnrDpmo) : 'NA';
           const cc  = row.cc  != null ? formatPercent(row.cc)  : 'NA';
+          const dcrRating = row.dcrRating ? `<div class="muted">${row.dcrRating}</div>` : '';
+          const dnrRating = row.dnrRating ? `<div class="muted">${row.dnrRating}</div>` : '';
+          const podRating = row.podRating ? `<div class="muted">${row.podRating}</div>` : '';
+          const ccRating = row.ccRating ? `<div class="muted">${row.ccRating}</div>` : '';
           const score = row.score != null ? row.score.toFixed(1) : 'NA';
           const encodedName = encodeURIComponent(row.name || '');
           const buttonCell = row.transporterId
@@ -631,9 +642,10 @@
               <td>${statusBadge}</td>
               <td>${row.weeks != null ? row.weeks : '0'}</td>
               <td>${formatNumber(row.deliveries)}</td>
-              <td>${dcr}</td>
-              <td>${pod}</td>
-              <td>${cc}</td>
+              <td>${dcr}${dcrRating}</td>
+              <td>${dnr}${dnrRating}</td>
+              <td>${pod}${podRating}</td>
+              <td>${cc}${ccRating}</td>
               <td>${score !== 'NA' ? `<span class="score-pill">${score}</span>` : '<span class="muted">N/A</span>'}</td>
               <td>${buttonCell}</td>
             </tr>`;
