@@ -375,6 +375,7 @@ function parseRoutesFromPaste_() {
   }
 
   var colRouteCode     = findCol(/route\s*code/);
+  var colDate          = findCol(/\bdate\b/);
   var colDSP           = findCol(/\bdsp\b/);
   var colTransporterId = findCol(/transporter\s*id/);
   var colDriverName    = findCol(/driver\s*name/);
@@ -399,12 +400,16 @@ function parseRoutesFromPaste_() {
     var routeCode = String(row[colRouteCode] || "").trim();
     if (!routeCode) continue;
 
-    var key = todayKey + "|" + routeCode;
+    var dateObj = colDate !== -1 ? parseDateValue_(row[colDate], tz) : null;
+    var dateValue = dateObj || today;
+    var dateKey = Utilities.formatDate(dateValue, tz, "yyyy-MM-dd");
+
+    var key = dateKey + "|" + routeCode;
 
     routes.push({
       key: key,
-      dateKey: todayKey,
-      dateValue: today,
+      dateKey: dateKey,
+      dateValue: dateValue,
       routeCode: routeCode,
       dsp: String(colDSP === -1 ? "" : row[colDSP] || "").trim(),
       transporterId: String(row[colTransporterId] || "").trim(),
@@ -426,28 +431,23 @@ function parseRoutesFromPaste_() {
 
 /************************************************
  * DAILY ROUTES – PUBLIC ENTRY (CALLED FROM SIDEBAR)
- * importDailyFromRaw(rawText, isStartOfDay)
+ * Single import that parses rescues within the batch.
  ************************************************/
-function importDailyFromRaw(rawText, isStartOfDay) {
+function importDailyFromRaw(rawText) {
   if (!rawText || !String(rawText).trim()) {
     throw new Error("No text received from panel.");
   }
   writeRawToPasteSheet_(String(rawText));
-  if (isStartOfDay) {
-    importDailyStartFromPaste();
-  } else {
-    importDailyEndFromPaste();
-  }
+  importDailyFromPaste_();
 }
 
-/************************************************
- * DAILY ROUTES – START OF DAY
- ************************************************/
-function importDailyStartFromPaste() {
+function importDailyFromPaste_() {
   var currentSheet = getSheetByKey_("currentSheet");
-  var completeSheet = getSheetByKey_("completeSheet");
 
   var routes = parseRoutesFromPaste_();
+
+  // Infer rescues based solely on this batch.
+  computeRescuesWithinBatch_(routes);
 
   var values = routes.map(function (r) {
     return [
@@ -463,14 +463,12 @@ function importDailyStartFromPaste() {
       r.allStops,
       r.stopsComplete,
       r.notStarted,
-      ""                 // Rescued by
+      r.rescuedBy || ""
     ];
   });
 
   ensureRouteHeaders_(currentSheet);
-  ensureRouteHeaders_(completeSheet);
   formatRouteDateColumn_(currentSheet);
-  formatRouteDateColumn_(completeSheet);
 
   var lastCur = currentSheet.getLastRow();
   if (lastCur > 1) {
@@ -479,38 +477,12 @@ function importDailyStartFromPaste() {
   currentSheet.getRange(2, 1, values.length, 13).setValues(values);
   applyDuplicateFormulas_(currentSheet, 2, values.length);
 
-  upsertRoutesIntoComplete_(completeSheet, routes);
-
-  sortCompleteByDateDesc_(completeSheet);
-
-  getSheetByKey_("pasteSheet").clear();
-
-  SpreadsheetApp.getActive().toast("Daily START imported: " + routes.length + " routes.", "Daily Routes", 8);
-}
-
-/************************************************
- * DAILY ROUTES – END OF DAY
- ************************************************/
-function importDailyEndFromPaste() {
-  var completeSheet = getSheetByKey_("completeSheet");
-  var currentSheet = getSheetByKey_("currentSheet");
-
-  var routes = parseRoutesFromPaste_();
-
-  var currentMap = buildCurrentRouteMap_(currentSheet);
-
-  applyRescueLogicNormalized_(routes, currentMap);
-
-  ensureRouteHeaders_(completeSheet);
-  formatRouteDateColumn_(completeSheet);
-
-  upsertRoutesIntoComplete_(completeSheet, routes);
-
-  sortCompleteByDateDesc_(completeSheet);
+  // Keep current-running list sorted with latest dates on top.
+  sortCompleteByDateDesc_(currentSheet);
 
   getSheetByKey_("pasteSheet").clear();
 
-  SpreadsheetApp.getActive().toast("Daily END imported (updated with rescues): " + routes.length + " routes.", "Daily Routes", 8);
+  SpreadsheetApp.getActive().toast("Daily routes imported to Current-Running list: " + routes.length + " routes.", "Daily Routes", 8);
 }
 
 /************************************************
@@ -554,6 +526,50 @@ function sortCompleteByDateDesc_(sheet) {
   if (last > 1) {
     sheet.getRange(2, 1, last - 1, 13).sort({ column: 2, ascending: false });
   }
+}
+
+function parseDateValue_(value, tz) {
+  if (value instanceof Date && !isNaN(value.getTime())) {
+    var d = new Date(value.getTime());
+    d.setHours(0, 0, 0, 0);
+    return d;
+  }
+  if (typeof value === "number" && isFinite(value)) {
+    var excelEpoch = new Date(Date.UTC(1899, 11, 30));
+    var ms = value * 24 * 60 * 60 * 1000;
+    var numericDate = new Date(excelEpoch.getTime() + ms);
+    if (!isNaN(numericDate.getTime())) {
+      numericDate.setHours(0, 0, 0, 0);
+      return numericDate;
+    }
+  }
+  var str = String(value || "").trim();
+  if (!str) return null;
+  var parts = str.split(/[\/\-]/);
+  if (parts.length === 3) {
+    var d1 = parseInt(parts[0], 10);
+    var d2 = parseInt(parts[1], 10);
+    var d3 = parseInt(parts[2], 10);
+    if (!isNaN(d1) && !isNaN(d2) && !isNaN(d3)) {
+      var year = d3 < 100 ? (d3 > 70 ? 1900 + d3 : 2000 + d3) : d3;
+      var monthFirst = new Date(year, d1 - 1, d2);
+      var dayFirst = new Date(year, d2 - 1, d1);
+      if (!isNaN(monthFirst.getTime()) && monthFirst.getDate() === d2 && monthFirst.getMonth() === d1 - 1) {
+        monthFirst.setHours(0, 0, 0, 0);
+        return monthFirst;
+      }
+      if (!isNaN(dayFirst.getTime()) && dayFirst.getDate() === d1 && dayFirst.getMonth() === d2 - 1) {
+        dayFirst.setHours(0, 0, 0, 0);
+        return dayFirst;
+      }
+    }
+  }
+  var parsed = new Date(str);
+  if (!isNaN(parsed.getTime())) {
+    parsed.setHours(0, 0, 0, 0);
+    return parsed;
+  }
+  return null;
 }
 
 function buildCurrentRouteMap_(sheet) {
@@ -685,6 +701,63 @@ function splitMulti_(raw) {
     .split(/[|,;\/]+/g)
     .map(function (s) { return s.trim(); })
     .filter(function (s) { return s; });
+}
+
+// New rescue inference: within a single daily batch, if an assignee also has their own route that day, treat them as a rescuer.
+function computeRescuesWithinBatch_(routes) {
+  if (!routes || !routes.length) return;
+
+  // Build a set of tokens (IDs/names) that appear as a solo assignee on any route.
+  var hasOwnRoute = {};
+  function lowerToken(t) { return String(t || "").trim().toLowerCase(); }
+
+  routes.forEach(function (r) {
+    var ids = splitMulti_(r.transporterId);
+    var names = splitMulti_(r.driverName);
+    var tokens = ids.length ? ids : names;
+    if (tokens.length === 1) {
+      hasOwnRoute[lowerToken(tokens[0])] = true;
+    }
+  });
+
+  routes.forEach(function (r) {
+    var ids = splitMulti_(r.transporterId);
+    var names = splitMulti_(r.driverName);
+    var tokens = ids.length ? ids : names;
+    if (tokens.length <= 1) {
+      r.rescuedBy = "";
+      return;
+    }
+
+    var rescuerIdx = [];
+    var rescueeIdx = [];
+    for (var i = 0; i < tokens.length; i++) {
+      var tokenLower = lowerToken(tokens[i]);
+      if (hasOwnRoute[tokenLower]) {
+        rescuerIdx.push(i);
+      } else {
+        rescueeIdx.push(i);
+      }
+    }
+
+    // If we couldn't find a distinct rescuee, default to the first token.
+    if (!rescueeIdx.length) rescueeIdx.push(0);
+    var primaryIdx = rescueeIdx[0];
+
+    // Normalise main assignee
+    r.transporterId = ids[primaryIdx] || ids[0] || r.transporterId;
+    r.driverName = names[primaryIdx] || names[0] || r.driverName;
+
+    // Build rescuedBy list from rescuers (prefer names, fallback to IDs).
+    var rescuerNames = [];
+    rescuerIdx.forEach(function (idx) {
+      var label = names[idx] || ids[idx] || "";
+      if (label && rescuerNames.indexOf(label) === -1) {
+        rescuerNames.push(label);
+      }
+    });
+    r.rescuedBy = rescuerNames.join(", ");
+  });
 }
 
 function upsertRoutesIntoComplete_(sheet, routes) {

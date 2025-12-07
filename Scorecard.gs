@@ -110,12 +110,15 @@ function getDriverScorecardData(transporterId, weekFilter) {
     (masterInfo.driver && masterInfo.driver.status) ||
     weeklyInfo.lastStatus ||
     "Status unknown";
+  var isNursery =
+    masterInfo.driver && masterInfo.driver.isNursery ? true : false;
 
   var payload = {
     driver: {
       name: driverName,
       transporterId: id,
       status: status,
+      isNursery: isNursery,
       dspList: routeInfo.summary.dspList,
       weeks: weeklyInfo.weeksCount,
       rank: leaderboardInfo.row ? leaderboardInfo.row.rank : null,
@@ -179,7 +182,7 @@ function getDriverScorecardData(transporterId, weekFilter) {
 
 function loadScorecardMaster_(sheet, transporterId) {
   var last = sheet.getLastRow();
-  var values = last > 1 ? sheet.getRange(2, 1, last - 1, 6).getValues() : [];
+  var values = last > 1 ? sheet.getRange(2, 1, last - 1, 8).getValues() : [];
   var driver = null;
   var nameToIds = {};
 
@@ -189,6 +192,8 @@ function loadScorecardMaster_(sheet, transporterId) {
     var first = String(row[1] || "").trim();
     var lastName = String(row[2] || "").trim();
     var status = String(row[5] || "").trim();
+    var nurseryRaw = String(row[7] || "").trim();
+    var isNursery = /^yes$/i.test(nurseryRaw);
     var fullName = (first + " " + lastName).trim();
     var key = fullName.toLowerCase();
 
@@ -204,6 +209,7 @@ function loadScorecardMaster_(sheet, transporterId) {
         id: id,
         name: fullName || "Driver " + id,
         status: status || "",
+        isNursery: isNursery,
       };
     }
   }
@@ -625,7 +631,7 @@ function collectRouteScorecardStats_(sheet, transporterId, driverNameCandidates,
   var weeklyMap = {};
   var routeTotals = {};
   var latestDate = null;
-  var dateKeySet = {};
+  var allDateKeySet = {};
   var summary = {
     totalRoutes: 0,
     onTimeRoutes: 0,
@@ -649,11 +655,6 @@ function collectRouteScorecardStats_(sheet, transporterId, driverNameCandidates,
         var dateIndex = columnMap.date != null ? columnMap.date : 1;
         var date = parseDateCell_(row[dateIndex]);
         if (!date) continue;
-        if (weekWindow) {
-          if (date < weekWindow.start || date > weekWindow.end) {
-            continue;
-          }
-        }
         date.setHours(0, 0, 0, 0);
 
         var transporterCell =
@@ -686,16 +687,24 @@ function collectRouteScorecardStats_(sheet, transporterId, driverNameCandidates,
             : "";
 
         var dateKey = Utilities.formatDate(date, tz, "yyyy-MM-dd");
-        dateKeySet[dateKey] = true;
-        if (!latestDate || date.getTime() > latestDate.getTime()) {
-          latestDate = new Date(date.getTime());
-        }
         var driverMatch =
           driverCell && driverNameSet[driverCell.toLowerCase()] ? true : false;
         var isDriverRow =
           (transporterCell && transporterCell === transporterId) || driverMatch;
 
         if (isDriverRow) {
+          allDateKeySet[dateKey] = true; // overall days worked regardless of filter
+        }
+        if (weekWindow) {
+          if (date < weekWindow.start || date > weekWindow.end) {
+            continue;
+          }
+        }
+        if (isDriverRow) {
+          dateKeySet[dateKey] = true;
+          if (!latestDate || date.getTime() > latestDate.getTime()) {
+            latestDate = new Date(date.getTime());
+          }
           summary.totalRoutes++;
           if (dsp) summary.dspSet[dsp] = true;
           summary.totalStops += allStops;
@@ -869,6 +878,7 @@ function collectRouteScorecardStats_(sheet, transporterId, driverNameCandidates,
     weeklyTrend: weeklyTrend,
     summary: resultSummary,
     topRoutes: topRoutes,
+    daysWorkedAll: Object.keys(allDateKeySet).length,
   };
 }
 

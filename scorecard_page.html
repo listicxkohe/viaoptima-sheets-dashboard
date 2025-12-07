@@ -626,7 +626,7 @@
         var prefix = displayVal > 0 ? "+" : "";
         var suffix = opts && opts.suffix ? " " + opts.suffix : "";
         var label = opts && opts.label ? opts.label : "vs last week";
-        var arrow = displayVal > 0 ? "▲" : displayVal < 0 ? "▼" : "■";
+        var arrow = displayVal > 0 ? "\u25B2" : displayVal < 0 ? "\u25BC" : "\u25A0";
         var shown = opts.percent && trend.percent != null ? displayVal.toFixed(1) : displayVal.toFixed(1);
         el.textContent = arrow + " " + prefix + shown + suffix + " " + label;
         if (rawVal > 0) el.classList.add("positive");
@@ -1075,3 +1075,6 @@
     </script>
   </body>
 </html>
+
+
+

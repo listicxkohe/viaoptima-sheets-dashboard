@@ -23,6 +23,10 @@
         color: #6b7280;
         margin-bottom: 16px;
       }
+      .filter-tabs { display:flex; gap:8px; margin-bottom:10px; flex-wrap:wrap; }
+      .filter-tabs button { border:1px solid #d1d5db; border-radius:8px; padding:6px 10px; background:#fff; cursor:pointer; font-size:12px; }
+      .filter-tabs button.active { background:#2563eb; color:#fff; border-color:#2563eb; }
+      .badge-nursery { display:inline-block; padding:2px 8px; border-radius:999px; background:#fef3c7; color:#92400e; font-size:11px; font-weight:700; }
 
       .summary-row {
         display: flex;
@@ -293,6 +297,11 @@
         <button class="btn btn-ghost" id="tabList">List</button>
         <button class="btn btn-ghost" id="tabChart">Distribution</button>
       </div>
+      <div class="filter-tabs">
+        <button id="filterAll" class="active">All</button>
+        <button id="filterNursery">Nursery only</button>
+        <button id="filterFull">Full only</button>
+      </div>
 
       <div class="summary-row">
         <div class="summary-card">
@@ -414,11 +423,12 @@
       let currentSortDir = 'asc'; // or 'desc'
       let weekOptions = [];
       let selectedWeek = null;
-      let viewMode = 'list';
-      let distChart = null;
-      let distribution = null;
-      let distributionHistory = [];
-      let selectedIds = new Set();
+  let viewMode = 'list';
+  let distChart = null;
+  let distribution = null;
+  let distributionHistory = [];
+  let selectedIds = new Set();
+  let filterMode = 'all'; // all | nursery | full
 
       function setStatus(msg) {
         document.getElementById('statusText').textContent = msg || '';
@@ -439,11 +449,11 @@
         return n.toLocaleString();
       }
 
-      function fetchLeaderboard(requestedWeek) {
-        if (typeof requestedWeek !== 'undefined') {
-          selectedWeek = requestedWeek;
-        }
-        setStatus('Loading ' + getWeekLabel(selectedWeek) + '...');
+  function fetchLeaderboard(requestedWeek) {
+    if (typeof requestedWeek !== 'undefined') {
+      selectedWeek = requestedWeek;
+    }
+    setStatus('Loading ' + getWeekLabel(selectedWeek) + '...');
         document.getElementById('tbody').innerHTML =
           '<tr><td colspan="13" class="muted" style="padding:14px;">Loading leaderboard...</td></tr>';
 
@@ -468,7 +478,7 @@
             document.getElementById('sumPod').textContent =
               s.avgPod != null ? formatPercent(s.avgPod) : 'NA';
 
-            applySearch();
+            applyFilters();
             setStatus('Loaded ' + getWeekLabel(selectedWeek) + '.');
             renderDistribution();
           })
@@ -506,18 +516,33 @@
         return 'week ' + value;
       }
 
-      function applySearch() {
-        const q = document.getElementById('searchInput').value.trim().toLowerCase();
-        if (!q) {
-          filteredRows = allRows.slice();
-        } else {
-          filteredRows = allRows.filter(r =>
+  function applySearch() {
+    applyFilterMode();
+  }
+
+  function applyFilterMode(mode) {
+    if (mode) filterMode = mode;
+    var q = (document.getElementById('searchInput').value || '').trim().toLowerCase();
+    var base = !q
+      ? allRows.slice()
+      : allRows.filter(function (r) {
+          return (
             (r.name || '').toLowerCase().includes(q) ||
             (r.transporterId || '').toLowerCase().includes(q)
           );
-        }
-        applySort();
-      }
+        });
+    if (filterMode === 'nursery') {
+      base = base.filter(function(r){ return r.isNursery; });
+    } else if (filterMode === 'full') {
+      base = base.filter(function(r){ return !r.isNursery; });
+    }
+    filteredRows = base;
+    applySort();
+  }
+
+  function applyFilters() {
+    applySearch();
+  }
 
       function applySort(field, toggleDir = false) {
         if (field) {
@@ -546,8 +571,9 @@
           return (va - vb) * dir;
         });
 
-        updateSortIcons();
+       updateSortIcons();
         renderTable();
+        renderDistribution();
       }
 
       function updateSortIcons() {
@@ -622,6 +648,7 @@
           const dnrRating = row.dnrRating ? `<div class="muted">${row.dnrRating}</div>` : '';
           const podRating = row.podRating ? `<div class="muted">${row.podRating}</div>` : '';
           const ccRating = row.ccRating ? `<div class="muted">${row.ccRating}</div>` : '';
+          const nurseryBadge = row.isNursery ? '<span class="badge-nursery">N</span>' : '';
           const score = row.score != null ? row.score.toFixed(1) : 'NA';
           const encodedName = encodeURIComponent(row.name || '');
           const buttonCell = row.transporterId
@@ -637,7 +664,7 @@
                   : ''}
                 ${delta}
               </td>
-              <td>${row.name || ''}</td>
+              <td>${row.name || ''} ${nurseryBadge}</td>
               <td>${row.transporterId || '<span class="muted">N/A</span>'}</td>
               <td>${statusBadge}</td>
               <td>${row.weeks != null ? row.weeks : '0'}</td>
@@ -1004,6 +1031,22 @@
           applySearch();
         });
 
+        document.getElementById('filterAll').addEventListener('click', function(){
+          filterMode = 'all';
+          setFilterButtons('all');
+          applyFilterMode('all');
+        });
+        document.getElementById('filterNursery').addEventListener('click', function(){
+          filterMode = 'nursery';
+          setFilterButtons('nursery');
+          applyFilterMode('nursery');
+        });
+        document.getElementById('filterFull').addEventListener('click', function(){
+          filterMode = 'full';
+          setFilterButtons('full');
+          applyFilterMode('full');
+        });
+
         document.querySelectorAll('th.sortable').forEach(th => {
           th.addEventListener('click', function () {
             const field = th.getAttribute('data-field');
@@ -1027,7 +1070,20 @@
           renderDistribution();
         });
         document.getElementById('tabList').classList.add('btn-primary');
+        setFilterButtons(filterMode);
       });
+
+      function setFilterButtons(mode) {
+        var map = {
+          all: 'filterAll',
+          nursery: 'filterNursery',
+          full: 'filterFull'
+        };
+        Object.keys(map).forEach(function(key){
+          var el = document.getElementById(map[key]);
+          if (el) el.classList.toggle('active', key === mode);
+        });
+      }
     </script>
   </body>
 </html>

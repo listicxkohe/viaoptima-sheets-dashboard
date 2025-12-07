@@ -225,7 +225,7 @@ function getLeaderboardData(weekFilter) {
   /********** MASTERLIST – DRIVER LIST + NAME→ID MAP **********/
   var mLast = masterSheet.getLastRow();
   var masterVals =
-    mLast > 1 ? masterSheet.getRange(2, 1, mLast - 1, 7).getValues() : [];
+    mLast > 1 ? masterSheet.getRange(2, 1, mLast - 1, 8).getValues() : [];
 
   // masterlist layout:
   // A: Transporter ID
@@ -233,6 +233,7 @@ function getLeaderboardData(weekFilter) {
   // C: Last Name
   // F: Status (Active / Inactive)
   // G: Email
+  // H: Nursery (Yes/No)
   var drivers = [];
   var nameToIds = {}; // "firstname lastname".toLowerCase() -> [transporterIds]
 
@@ -243,6 +244,8 @@ function getLeaderboardData(weekFilter) {
     var last = String(row[2] || "").trim();
     var status = String(row[5] || "").trim(); // F
     var email = String(row[6] || "").trim(); // G
+    var nurseryRaw = String(row[7] || "").trim(); // H
+    var isNurseryFlag = /^yes$/i.test(nurseryRaw);
 
     var name = (first + " " + last).trim();
     if (!name) name = "(Unnamed driver " + (i + 2) + ")";
@@ -252,6 +255,7 @@ function getLeaderboardData(weekFilter) {
       name: name,
       status: status || "",
       email: email || "",
+      isNursery: isNurseryFlag,
     });
 
     if (trId) {
@@ -462,6 +466,7 @@ function getLeaderboardData(weekFilter) {
 
     var weeks = stat ? stat.weeks : 0;
     var deliveries = stat ? stat.deliveries : 0;
+    var isNursery = drv && drv.isNursery ? true : false;
     var dcrAvg = stat && stat.dcr != null ? stat.dcr : null;
     var dnrDpmo = stat && stat.dnrDpmo != null ? stat.dnrDpmo : null;
     var podAvg = stat && stat.pod != null ? stat.pod : null;
@@ -489,6 +494,7 @@ function getLeaderboardData(weekFilter) {
       status: drv.status || "",
       email: drv.email || "",
       weeks: weeks,
+      isNursery: isNursery,
       deliveries: deliveries,
       dcr: dcrAvg != null ? roundPct_(dcrAvg) : null,
       dcrRating: ratePercent_(dcrAvg),
@@ -731,25 +737,29 @@ function computeScore_(stats, cfg) {
   var experienceScore =
     weeksTarget > 0 ? Math.min(1, Math.max(0, weeks / weeksTarget)) : 0;
 
-  // Rescues (0-1), centered at 0.5 for net zero
+  // Rescues (0-1), neutral at 0.5 for net zero; no rescues => no weight
   var rescueCap = cfg.rescueCap || 3;
+  var g = stats.rescuesGiven || 0;
+  var t = stats.rescuesTaken || 0;
   var netRescues =
-    (stats.rescuesGiven || 0) * (cfg.rescuesGivenWeight || 0) -
-    (stats.rescuesTaken || 0) * (cfg.rescuesTakenWeight || 0);
+    g * (cfg.rescuesGivenWeight || 0) -
+    t * (cfg.rescuesTakenWeight || 0);
+  var resActive = g !== 0 || t !== 0;
   var rescueScore =
     rescueCap > 0
       ? Math.min(1, Math.max(0, (netRescues + rescueCap) / (2 * rescueCap)))
       : 0.5;
 
   // Top-level weights derived from sliders and normalised to 1
-  var qualityBase = 2; // bias toward quality so great metrics land closer to 100
+  // Stronger bias to quality, shrink/zero rescue weight when no activity
+  var qualityBase = 4;
   var volRaw = Math.max(cfg.volumeWeight || 0, 0);
   var expRaw = Math.max(cfg.weeksWeight || 0, 0);
-  // Use the larger of rescue weights (not sum) to avoid overpowering quality
-  var resRaw = Math.max(
+  var resRawBase = Math.max(
     Math.max(cfg.rescuesGivenWeight || 0, 0),
     Math.max(cfg.rescuesTakenWeight || 0, 0)
   );
+  var resRaw = resActive ? Math.min(resRawBase, 0.5) : 0; // cap to avoid overpowering
   var totalTop = qualityBase + volRaw + expRaw + resRaw;
   var wQuality = qualityBase / totalTop;
   var wVolume = volRaw / totalTop;
